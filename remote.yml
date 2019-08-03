@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudBD S3 Remote'
+
+# This template requires your CloudBD account credentials saved in an AWS SSM
+# parameter. See the CloudBD documentation pages at www.cloudbd.io/docs for
+# more info.
+
+Parameters:
+  CredentialsRegion:
+    Description: AWS Region of the SSM Parameter Store containing your
+                 CloudBD credentials.
+    Type: String
+    AllowedValues: [
+      us-east-1, us-east-2, us-west-1, us-west-2, ca-central-1,
+      eu-central-1, eu-north-1, eu-west-1, eu-west-2, eu-west-3,
+      ap-northeast-1, ap-northeast-2, ap-south-1, ap-southeast-1,
+      ap-southeast-2, sa-east-1
+    ]
+    ConstraintDescription: must be a supported AWS Region
+
+  CredentialsParamName:
+    Description: SSM Parameter Name that contains your CloudBD credentials.
+    Type: String
+    Default: '/cloudbd/credentials.json'
+
+  CredentialsCustomKeyId:
+    Description: Customer managed KMS Key ID (not the alias) used to encrypt
+                 your CloudBD credentials SSM parameter. Leave this parameter
+                 empty if using the default SSM key ('alias/aws/ssm').
+    Type: String
+    Default: ''
+
+  ServerSideEncryption:
+    Description: Use server-side encryption with SSE-S3 (AES256).
+    Type: String
+    AllowedValues: [ true, false ]
+    Default: false
+
+  HttpProtocol:
+    Description: Select the HTTP protocol to use when communicating with the
+                 remote. HTTPS encrypts all network traffic but will have
+                 higher CPU usage.
+    Type: String
+    AllowedValues: [ http, https ]
+    Default: http
+
+Conditions:
+  UsePathBasedParameter: !Equals [!Select [0, !Split ['/', !Ref CredentialsParamName]], '']
+  UseCustomKey: !Not [!Equals [!Ref CredentialsCustomKeyId, '']]
+  UseEncryption: !Equals [!Ref ServerSideEncryption, true]
+
+Resources:
+  CloudBDS3RemoteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        !If
+          - UseEncryption
+          - ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' }
+          - !Ref 'AWS::NoValue'
+
+  CloudBDS3RemotePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Grants access to the CloudBD credentials and the S3 remote bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: 'ssm:GetParameter'
+            Resource: !If
+              - UsePathBasedParameter
+              - !Sub 'arn:aws:ssm:${CredentialsRegion}:${AWS::AccountId}:parameter${CredentialsParamName}'
+              - !Sub 'arn:aws:ssm:${CredentialsRegion}:${AWS::AccountId}:parameter/${CredentialsParamName}'
+          - !If # Only enabled for customer managed keys to allow decrypt of the CloudBD credentials.json
+              - UseCustomKey
+              - Effect: Allow
+                Action: 'kms:Decrypt'
+                Resource: !Sub 'arn:aws:kms:${CredentialsRegion}:${AWS::AccountId}:key/${CredentialsCustomKeyId}'
+              - !Ref 'AWS::NoValue'
+          - Effect: Allow
+            Action: 's3:ListBucket'
+            Resource: !GetAtt CloudBDS3RemoteBucket.Arn
+          - Effect: Allow
+            Action: 's3:HeadBucket'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 's3:PutObject'
+              - 's3:GetObject'
+              - 's3:DeleteObject'
+            Resource: !Sub '${CloudBDS3RemoteBucket.Arn}/cloudbd/*'
+
+  CloudBDDiskLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns: [ !Ref CloudBDS3RemotePolicy ]
+      Policies:
+        - PolicyName: 'root'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  CloudBDDiskLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'cloudbd-disk.handler'
+      Role: !GetAtt CloudBDDiskLambdaRole.Arn
+      Runtime: 'python2.7'
+      Environment:
+        Variables:
+          CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
+          CLOUDBD_CREDS_SSM_REGION: !Ref CredentialsRegion
+          CLOUDBD_CREDS_SSM_PARAM: !Ref CredentialsParamName
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/cloudbd-disk.zip'
+      Timeout: 900
+      MemorySize: 512
+
+Outputs:
+  CloudBDS3RemoteBucket:
+    Description: CloudBD S3 Remote Bucket
+    Value: !Ref CloudBDS3RemoteBucket
+    Export:
+      Name: !Sub '${AWS::StackName}:CloudBDS3RemoteBucket'
+
+  CloudBDS3RemotePolicy:
+    Description: CloudBD S3 Remote IAM Policy
+    Value: !Ref CloudBDS3RemotePolicy
+    Export:
+      Name: !Sub '${AWS::StackName}:CloudBDS3RemotePolicy'
+
+  CloudBDDiskLambda:
+    Description: CloudBD Disk CloudFormation Custom Resource Lambda
+    Value: !GetAtt CloudBDDiskLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}:CloudBDDiskLambda'
+
+  CloudBDS3RemoteConf:
+    Description: CloudBD S3 Remote Config
+    Value: !Sub |
+      type = aws_ec2_metadata
+      region = ${AWS::Region}
+      bucket = ${CloudBDS3RemoteBucket}
+      protocol = ${HttpProtocol}
+    Export:
+      Name: !Sub '${AWS::StackName}:CloudBDS3RemoteConf'
+
+  GetCloudBDCredentials:
+    Description: Get CloudBD Credentials AWS CLI Command
+    Value: !Sub 'aws ssm get-parameter --region "${CredentialsRegion}" --name "${CredentialsParamName}" --with-decryption --query Parameter.Value --output text'
+    Export:
+      Name: !Sub '${AWS::StackName}:GetCloudBDCredentials'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label: { default: 'CloudBD Credentials' }
+      Parameters:
+      - CredentialsRegion
+      - CredentialsParamName
+      - CredentialsCustomKeyId
+    - Label: { default: 'S3 Remote Options' }
+      Parameters:
+      - ServerSideEncryption
+      - HttpProtocol
+    ParameterLabels:
+      CredentialsRegion: { default: 'SSM Parameter Store Region' }
+      CredentialsParamName: { default: 'SSM Parameter Name' }
+      CredentialsCustomKeyId: { default: 'Customer KMS Key' }
+      ServerSideEncryption: { default: 'Server-Side Encryption' }
+      HttpProtocol: { default: 'HTTP Protocol' }
+

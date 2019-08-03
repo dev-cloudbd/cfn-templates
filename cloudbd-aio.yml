@@ -1,0 +1,668 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudBD All-In-One - S3 Remote, VPC w/S3 Endpoint, CloudBD Disk,
+             and Ubuntu 18.04/Bionic EC2 Test Server
+
+# This template requires your CloudBD account credentials saved in an AWS SSM
+# parameter. See the CloudBD documentation pages at www.cloudbd.io/docs for
+# more info.
+
+Parameters:
+  ############################################################################
+  ## CloudBD S3 Remote Parameters
+  CloudBDCredentialsRegion:
+    Description: AWS Region of the SSM Parameter Store that contains your
+                 CloudBD credentials.
+    Type: String
+    AllowedValues: [
+      us-east-1, us-east-2, us-west-1, us-west-2, ca-central-1,
+      eu-central-1, eu-north-1, eu-west-1, eu-west-2, eu-west-3,
+      ap-northeast-1, ap-northeast-2, ap-south-1, ap-southeast-1,
+      ap-southeast-2, sa-east-1
+    ]
+    ConstraintDescription: must be a supported AWS Region
+
+  CloudBDCredentialsParamName:
+    Description: SSM Parameter Name that contains your CloudBD credentials.
+    Type: String
+    Default: '/cloudbd/credentials.json'
+
+  CloudBDCredentialsCustomKeyId:
+    Description: Customer managed KMS Key ID (not the alias) used to encrypt
+                 your CloudBD credentials SSM parameter. Leave this parameter
+                 empty if using the default SSM key ('alias/aws/ssm').
+    Type: String
+    Default: ''
+
+  CloudBDServerSideEncryption:
+    Description: Use server-side encryption with SSE-S3 (AES256).
+    Type: String
+    AllowedValues: [ true, false ]
+    Default: false
+
+  CloudBDHttpProtocol:
+    Description: Select the HTTP protocol to use when communicating with the
+                 remote. HTTPS encrypts all network traffic but will have
+                 higher CPU usage.
+    Type: String
+    AllowedValues: [ http, https ]
+    Default: http
+
+  ############################################################################
+  ## VPC and Instance Parameters
+  AvailabilityZone:
+    Description: AWS Availability Zone for the EC2 instance.
+    Type: AWS::EC2::AvailabilityZone::Name
+    ConstraintDescription: must be a valid AZ for this account and region
+
+  SshLocationCidr:
+    Description: The IP address range allowed SSH access to the EC2 test server
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
+    Default: '0.0.0.0/0'
+
+  KeyName:
+    Description: The EC2 KeyPair name allowed SSH access to the test server.
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 Key Pair
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: c5n.2xlarge
+    AllowedValues: [a1.2xlarge, a1.4xlarge, a1.large, a1.medium, a1.xlarge, c1.medium, c1.xlarge, c3.2xlarge, c3.4xlarge, c3.8xlarge, c3.large, c3.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c4.large, c4.xlarge, c5.18xlarge, c5.2xlarge, c5.4xlarge, c5.9xlarge, c5.large, c5.xlarge, c5d.18xlarge, c5d.2xlarge, c5d.4xlarge, c5d.9xlarge, c5d.large, c5d.xlarge, c5n.18xlarge, c5n.2xlarge, c5n.4xlarge, c5n.9xlarge, c5n.large, c5n.xlarge, cc1.4xlarge, cc2.8xlarge, cg1.4xlarge, cr1.8xlarge, d2.2xlarge, d2.4xlarge, d2.8xlarge, d2.xlarge, f1.16xlarge, f1.2xlarge, f1.4xlarge, g2.2xlarge, g2.8xlarge, g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, h1.16xlarge, h1.2xlarge, h1.4xlarge, h1.8xlarge, hi1.4xlarge, hs1.8xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge, i2.xlarge, i3.16xlarge, i3.2xlarge, i3.4xlarge, i3.8xlarge, i3.large, i3.metal, i3.xlarge, i3en.12xlarge, i3en.24xlarge, i3en.2xlarge, i3en.3xlarge, i3en.6xlarge, i3en.large, i3en.metal, i3en.xlarge, m1.large, m1.medium, m1.small, m1.xlarge, m2.2xlarge, m2.4xlarge, m2.xlarge, m3.2xlarge, m3.large, m3.medium, m3.xlarge, m4.10xlarge, m4.16xlarge, m4.2xlarge, m4.4xlarge, m4.large, m4.xlarge, m5.12xlarge, m5.24xlarge, m5.2xlarge, m5.4xlarge, m5.large, m5.metal, m5.xlarge, m5a.12xlarge, m5a.24xlarge, m5a.2xlarge, m5a.4xlarge, m5a.large, m5a.xlarge, m5ad.12xlarge, m5ad.16xlarge, m5ad.24xlarge, m5ad.2xlarge, m5ad.4xlarge, m5ad.8xlarge, m5ad.large, m5ad.xlarge, m5d.12xlarge, m5d.24xlarge, m5d.2xlarge, m5d.4xlarge, m5d.large, m5d.metal, m5d.xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p3dn.24xlarge, r3.2xlarge, r3.4xlarge, r3.8xlarge, r3.large, r3.xlarge, r4.16xlarge, r4.2xlarge, r4.4xlarge, r4.8xlarge, r4.large, r4.xlarge, r5.12xlarge, r5.24xlarge, r5.2xlarge, r5.4xlarge, r5.large, r5.metal, r5.xlarge, r5a.12xlarge, r5a.24xlarge, r5a.2xlarge, r5a.4xlarge, r5a.large, r5a.xlarge, r5ad.12xlarge, r5ad.16xlarge, r5ad.24xlarge, r5ad.2xlarge, r5ad.4xlarge, r5ad.8xlarge, r5ad.large, r5ad.xlarge, r5d.12xlarge, r5d.24xlarge, r5d.2xlarge, r5d.4xlarge, r5d.large, r5d.metal, r5d.xlarge, t1.micro, t2.2xlarge, t2.large, t2.medium, t2.micro, t2.nano, t2.small, t2.xlarge, t3.2xlarge, t3.large, t3.medium, t3.micro, t3.nano, t3.small, t3.xlarge, t3a.2xlarge, t3a.large, t3a.medium, t3a.micro, t3a.nano, t3a.small, t3a.xlarge, u-12tb1.metal, u-6tb1.metal, u-9tb1.metal, x1.16xlarge, x1.32xlarge, x1e.16xlarge, x1e.2xlarge, x1e.32xlarge, x1e.4xlarge, x1e.8xlarge, x1e.xlarge, z1d.12xlarge, z1d.2xlarge, z1d.3xlarge, z1d.6xlarge, z1d.large, z1d.metal, z1d.xlarge]
+    ConstraintDescription: must be a valid EC2 instance type
+
+Mappings:
+  # Latest mappings updated Sat Aug 3, 2019
+  UbuntuBionic:
+    us-east-1:
+      HVM64: ami-07d0cf3af28718ef8
+    us-east-2:
+      HVM64: ami-05c1fa8df71875112
+    us-west-1:
+      HVM64: ami-08fd8ae3806f09a08
+    us-west-2:
+      HVM64: ami-06f2f779464715dc5
+    ca-central-1:
+      HVM64: ami-0d0eaed20348a3389
+    eu-central-1:
+      HVM64: ami-0ac05733838eabc06
+    eu-west-1:
+      HVM64: ami-06358f49b5839867c
+    eu-west-2:
+      HVM64: ami-077a5b1762a2dde35
+    eu-west-3:
+      HVM64: ami-0ad37dbbe571ce2a1
+    eu-north-1:
+      HVM64: ami-ada823d3
+    ap-northeast-1:
+      HVM64: ami-0eeb679d57500a06c
+    ap-northeast-2:
+      HVM64: ami-0fd02cb7da42ee5e0
+    ap-southeast-1:
+      HVM64: ami-03b6f27628a4569c8
+    ap-southeast-2:
+      HVM64: ami-0edcec072887c2caa
+    ap-south-1:
+      HVM64: ami-009110a2bf8d7dd0a
+    sa-east-1:
+      HVM64: ami-02a3447be1ec3a38f
+
+Conditions:
+  CloudBDUsePathBasedParameter: !Equals [!Select [0, !Split ['/', !Ref CloudBDCredentialsParamName]], '']
+  CloudBDUseCustomKey: !Not [!Equals [!Ref CloudBDCredentialsCustomKeyId, '']]
+  CloudBDUseEncryption: !Equals [!Ref CloudBDServerSideEncryption, true]
+  # Check for 25 Gigabit networking instance types for using highperf settings
+  CloudBDUseHighperf: !Or
+    - !Or
+      - !Equals [ !Ref InstanceType, 'c5n.2xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5n.4xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5n.9xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5n.18xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5.18xlarge' ]
+      - !Equals [ !Ref InstanceType, 'g3.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'h1.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'i3.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'i3.metal' ]
+      - !Equals [ !Ref InstanceType, 'm4.16xlarge' ]
+    - !Or
+      - !Equals [ !Ref InstanceType, 'm5.24xlarge' ]
+      - !Equals [ !Ref InstanceType, 'p2.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'p3.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'r4.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'r5.12xlarge' ]
+      - !Equals [ !Ref InstanceType, 'r5.24xlarge' ]
+      - !Equals [ !Ref InstanceType, 'x1.32xlarge' ]
+      - !Equals [ !Ref InstanceType, 'x1e.32xlarge' ]
+      - !Equals [ !Ref InstanceType, 'z1d.6xlarge' ]
+      - !Equals [ !Ref InstanceType, 'z1d.12xlarge' ]
+
+Resources:
+  ##############################################################################
+  # CloudBD S3 remote
+  CloudBDS3RemoteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        !If
+          - CloudBDUseEncryption
+          - ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' }
+          - !Ref 'AWS::NoValue'
+
+  CloudBDS3RemotePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Grants access to the CloudBD credentials and the S3 remote bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: 'ssm:GetParameter'
+            Resource: !If
+              - CloudBDUsePathBasedParameter
+              - !Sub 'arn:aws:ssm:${CloudBDCredentialsRegion}:${AWS::AccountId}:parameter${CloudBDCredentialsParamName}'
+              - !Sub 'arn:aws:ssm:${CloudBDCredentialsRegion}:${AWS::AccountId}:parameter/${CloudBDCredentialsParamName}'
+          - !If # Only enabled for customer managed keys to allow decrypt of the CloudBD credentials.json
+              - CloudBDUseCustomKey
+              - Effect: Allow
+                Action: 'kms:Decrypt'
+                Resource: !Sub 'arn:aws:kms:${CloudBDCredentialsRegion}:${AWS::AccountId}:key/${CloudBDCredentialsCustomKeyId}'
+              - !Ref 'AWS::NoValue'
+          - Effect: Allow
+            Action: 's3:ListBucket'
+            Resource: !GetAtt CloudBDS3RemoteBucket.Arn
+          - Effect: Allow
+            Action: 's3:HeadBucket'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 's3:PutObject'
+              - 's3:GetObject'
+              - 's3:DeleteObject'
+            Resource: !Sub '${CloudBDS3RemoteBucket.Arn}/cloudbd/*'
+
+  CloudBDDiskLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns: [ !Ref CloudBDS3RemotePolicy ]
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  CloudBDDiskLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'cloudbd-disk.handler'
+      Role: !GetAtt CloudBDDiskLambdaRole.Arn
+      Runtime: 'python2.7'
+      Environment:
+        Variables:
+          CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
+          CLOUDBD_CREDS_SSM_REGION: !Ref CloudBDCredentialsRegion
+          CLOUDBD_CREDS_SSM_PARAM: !Ref CloudBDCredentialsParamName
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/cloudbd-disk.zip'
+      Timeout: 900
+      MemorySize: 512
+
+  ##############################################################################
+  # Single subnet VPC with S3 endpoint
+  TestVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+
+  TestVpcInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  TestVpcInternetGatewayAtachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref TestVpc
+      InternetGatewayId: !Ref TestVpcInternetGateway
+
+  TestVpcRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TestVpc
+
+  TestVpcDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: TestVpcInternetGatewayAtachment
+    Properties:
+      RouteTableId: !Ref TestVpcRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TestVpcInternetGateway
+
+  TestVpcS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref TestVpc
+      RouteTableIds:
+      - !Ref TestVpcRouteTable
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+
+  TestVpcSshSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      VpcId: !Ref TestVpc
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: !Ref SshLocationCidr
+
+  TestVpcSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 172.16.0.0/16
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref TestVpc
+      AvailabilityZone: !Ref AvailabilityZone
+
+  TestVpcSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TestVpcRouteTable
+      SubnetId: !Ref TestVpcSubnet
+
+  ##############################################################################
+  # CloudBD test disk and Ubuntu 18.04/Bionic test server
+  CloudBDTestDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub '${AWS::StackName}'
+      Size: 128G
+
+  TestServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns: [ !Ref CloudBDS3RemotePolicy ]
+
+  TestServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref TestServerRole ]
+
+  TestServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+      - !GetAtt TestVpc.DefaultSecurityGroup
+      - !Ref TestVpcSshSecurityGroup
+      SubnetId: !Ref TestVpcSubnet
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [UbuntuBionic, !Ref 'AWS::Region', HVM64]
+      Tags:
+      - Key: Name
+        Value: !Ref 'AWS::StackName'
+      IamInstanceProfile: !Ref TestServerInstanceProfile
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -x
+            export DEBIAN_FRONTEND=noninteractive
+
+            # The regional <region>.ec2.archive.ubuntu.com sources frequently
+            # are not responsive or very very slow causing instances to time-out
+            # so let's not use them.
+            sed -i 's/http:.*\.ec2\.archive\.ubuntu\.com\/ubuntu\//mirror:\/\/mirrors\.ubuntu\.com\/mirrors\.txt/' /etc/apt/sources.list
+
+            # upgrade packages
+            apt -y update
+            apt -y upgrade
+
+            # install cfn bootstrap package
+            apt install -y --no-install-recommends python-pip python-setuptools python-wheel
+            pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+
+            # perform AWS::CloudFormation::Init tasks
+            RESOURCE='TestServer'
+            /usr/local/bin/cfn-init -v \
+                --region ${AWS::Region} \
+                --stack ${AWS::StackName} \
+                --resource ${!RESOURCE}
+
+            # reboot if needed and signal completion to CloudFormation
+            RET=$?
+            if [ "$RET" -eq "0" ] && [ -e /var/run/reboot-required ]; then
+              cat << EOF > /etc/cron.d/cfn-signal
+            SHELL=/bin/bash
+            PATH=/sbin:/bin:/usr/sbin:/usr/bin
+            MAILTO=root
+            HOME=/
+            @reboot root { /usr/local/bin/cfn-signal -e ${!RET} --region ${AWS::Region} --stack ${AWS::StackName} --resource ${!RESOURCE}; rm /etc/cron.d/cfn-signal; } > /dev/null
+            EOF
+              reboot
+            else
+              /usr/local/bin/cfn-signal -e ${!RET} \
+                  --region ${AWS::Region} \
+                  --stack ${AWS::StackName} \
+                  --resource ${!RESOURCE}
+            fi
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+          - CloudBD
+          - PerformanceTests
+        CloudBD:
+          files:
+            /etc/apt/sources.list.d/cloudbd.list:
+              source: 'https://repo.cloudbd.io/bionic/cloudbd.list'
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /usr/share/keyrings/cloudbd-keyring.gpg:
+              source: https://repo.cloudbd.io/cloudbd-keyring.gpg
+              mode: "000644"
+              owner: "root"
+              group: "root"
+          commands:
+            01-install-packages:
+              command: !Sub |
+                set -xe
+                apt -y update
+                apt -y install cbd-client
+            02-deploy-credentials:
+              test: '! [ -e /etc/cloudbd/credentials.json ]'
+              command: !Sub |
+                set -xe
+                apt install -y --no-install-recommends python-pip python-setuptools python-wheel
+                pip install awscli
+                aws ssm get-parameter \
+                    --region "${CloudBDCredentialsRegion}" \
+                    --name "${CloudBDCredentialsParamName}" \
+                    --with-decryption \
+                    --query Parameter.Value \
+                    --output text > /etc/cloudbd/credentials.json
+                chown root:cloudbd /etc/cloudbd/credentials.json
+                chmod 640 /etc/cloudbd/credentials.json
+            03-configure-remote:
+              test: '! [ -e /etc/cloudbd/remotes.d/remote.conf ]'
+              command: !Sub |
+                set -xe
+                cat << EOF > /etc/cloudbd/remotes.d/remote.conf
+                type = aws_ec2_metadata
+                region = ${AWS::Region}
+                bucket = ${CloudBDS3RemoteBucket}
+                protocol = ${CloudBDHttpProtocol}
+                EOF
+            04-attach-disk:
+              test: !Sub '! [ -b /dev/mapper/remote:${CloudBDTestDisk.Name} ]'
+              command: !Sub
+                - |
+                  set -xe
+
+                  # Ensure that the remote disk exists
+                  cloudbd info "remote:${CloudBDTestDisk.Name}"
+
+                  # If the disk is not already listed within the cbdtab, add it
+                  # Each CloudBD disk attached to the instance requires a unique nbd number (0-15)
+                  if ! grep -E -q "[[:space:]]remote:${CloudBDTestDisk.Name}([[:space:]#]|\$)" /etc/cloudbd/cbdtab; then
+                    /bin/echo -E "nbd0	remote:${CloudBDTestDisk.Name}	${DriverMode}" >> /etc/cloudbd/cbdtab
+                  fi
+
+                  # Start the disk (on reboot cbdtab will automatically attach the disk)
+                  cbddisks_start "remote:${CloudBDTestDisk.Name}"
+                - DriverMode: !If [CloudBDUseHighperf, 'highperf', 'defaults']
+            05-format-filesystem:
+              test: '! /bin/mountpoint -q /mnt'
+              command: !Sub |
+                set -xe
+                DEVICE="/dev/mapper/remote:${CloudBDTestDisk.Name}"
+                MOUNT="/mnt"
+
+                # Check that the CloudBD disk is attached before formatting
+                [ -b "${!DEVICE}" ]
+
+                # Check that the disk is not already formatted and create a filesystem with the recommended settings
+                if ! blkid "${!DEVICE}" | grep -q -e 'UUID' -e 'TYPE' -e 'PARTUUID'; then
+                  mkfs.ext4 -b 4096 -T largefile \
+                      -E stride=512,stripe_width=512,lazy_itable_init=0,lazy_journal_init=0,packed_meta_blocks=1 \
+                      "${!DEVICE}"
+                fi
+
+                # If the disk is not already listed in the fstab, add it
+                if ! grep -q "^${!DEVICE}[[:space:]]" /etc/fstab; then
+                  # fstab requires any spaces in the mountpoint to be encoded
+                  FSTAB_ENCODED_MOUNT="$(/bin/echo ${!MOUNT} | sed -e 's/[[:space:]]/\\040/g')"
+                  /bin/echo -E "${!DEVICE}	${!FSTAB_ENCODED_MOUNT}	ext4	_netdev,discard" >> /etc/fstab
+                fi
+
+                # Create the mountpoint and mount the disk (on reboot fstab will automatically mount the filesystem)
+                mkdir -p "${!MOUNT}"
+                mount "${!DEVICE}"
+
+                # Change ownership of the filesystem to the default Ubuntu EC2 user for test scripts
+                chown -R ubuntu:ubuntu "${!MOUNT}"
+        PerformanceTests:
+          packages:
+            apt:
+              fio: []
+          files:
+            /etc/sysctl.d/55-cloudbd.conf:
+              content: !Sub |
+                # Reduce buffer cache latency.
+                vm.dirty_background_bytes=2097152
+
+                # Request/response protocols like rpc and REST send some data
+                # and wait for a response so there will always be idle time.
+                # Dont shrink congestion window while idle.
+                net.ipv4.tcp_slow_start_after_idle=0
+
+                # Increase NAPI polling cycle max time to reduce 'squeezed' events
+                net.core.netdev_budget_usecs = 5000
+
+                # pfifo_fast works best on EC2 with request/response
+                net.core.default_qdisc = pfifo_fast
+
+                # Increase the max write buffer size for lower CPU overhead
+                net.core.wmem_max = 1056768
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /home/ubuntu/write.fio:
+              content: !Sub |
+                # Sequential write test
+                [global]
+                directory=/mnt
+                runtime=30s
+                group_reporting
+
+                [write]
+                rw=write
+                ioengine=libaio
+                iodepth=8
+                numjobs=8
+                size=1G
+                blocksize=1M
+                direct=1
+                end_fsync=1
+              mode: "000644"
+              owner: "ubuntu"
+              group: "ubuntu"
+            /home/ubuntu/read.fio:
+              content: !Sub |
+                # Sequential read test
+                [global]
+                directory=/mnt
+                runtime=30s
+                group_reporting
+
+                [read]
+                rw=read
+                ioengine=libaio
+                iodepth=16
+                numjobs=8
+                size=1G
+                blocksize=1M
+                direct=1
+              mode: "000644"
+              owner: "ubuntu"
+              group: "ubuntu"
+            /home/ubuntu/rw.fio:
+              content: !Sub |
+                # Sequential mixed read/write test
+                [global]
+                directory=/mnt
+                runtime=30s
+                group_reporting
+
+                [rw]
+                rw=rw
+                rwmixread=75
+                ioengine=libaio
+                iodepth=16
+                numjobs=8
+                size=1G
+                blocksize=1M
+                direct=1
+                end_fsync=1
+            /home/ubuntu/randwrite.fio:
+              content: !Sub |
+                # Random write test
+                [global]
+                directory=/mnt
+                runtime=30s
+                group_reporting
+
+                [randwrite]
+                rw=randwrite
+                ioengine=libaio
+                iodepth=32
+                numjobs=1
+                size=8G
+                blocksize=64k
+                direct=1
+                end_fsync=1
+              mode: "000644"
+              owner: "ubuntu"
+              group: "ubuntu"
+            /home/ubuntu/randread.fio:
+              content: !Sub |
+                # Random read test
+                [global]
+                directory=/mnt
+                runtime=30s
+                group_reporting
+
+                [random-read]
+                rw=randread
+                ioengine=libaio
+                iodepth=64
+                numjobs=1
+                size=8G
+                blocksize=64k
+                direct=1
+            /home/ubuntu/randrw.fio:
+              content: !Sub |
+                # Random mixed read/write test
+                [global]
+                directory=/mnt
+                runtime=30s
+                group_reporting
+
+                [randrw]
+                rw=randrw
+                rwmixread=75
+                ioengine=libaio
+                iodepth=64
+                numjobs=1
+                size=8G
+                blocksize=64k
+                direct=1
+                end_fsync=1
+              mode: "000644"
+              owner: "ubuntu"
+              group: "ubuntu"
+          commands:
+            01-apply-sysctls:
+              command: !Sub |
+                set -xe
+                sysctl --system
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
+
+Outputs:
+  TestServerId:
+    Description: TestServer instance ID
+    Value: !Ref TestServer
+    Export:
+      Name: !Sub '${AWS::StackName}::TestServerId'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'CloudBD S3 Remote'
+        Parameters:
+          - CloudBDCredentialsRegion
+          - CloudBDCredentialsParamName
+          - CloudBDCredentialsCustomKeyId
+          - CloudBDServerSideEncryption
+          - CloudBDHttpProtocol
+      - Label:
+          default: 'VPC/EC2 Instance'
+        Parameters:
+          - AvailabilityZone
+          - InstanceType
+          - KeyName
+          - SshLocationCidr
+    ParameterLabels:
+      CloudBDCredentialsRegion:
+        default: 'SSM Parameter Store Region'
+      CloudBDCredentialsParamName:
+        default: 'SSM Parameter Name'
+      CloudBDCredentialsCustomKeyId:
+        default: 'Customer KMS Key'
+      CloudBDServerSideEncryption:
+        default: 'Server-Side Encryption'
+      CloudBDHttpProtocol:
+        default: 'HTTP Protocol'
+      AvailabilityZone:
+        default: 'Availability Zone'
+      InstanceType:
+        default: 'EC2 Instance Type'
+      KeyName:
+        default: 'EC2 Key Pair'
+      SshLocationCidr:
+        default: 'SSH Location'
