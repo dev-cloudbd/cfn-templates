@@ -78,6 +78,7 @@ def handler(event, context):
   LOGGER.info('Request received event:\n%s', json.dumps(event))
 
   try:
+    physicalResourceId = "0"
     requestType = event['RequestType']
     disk = event['ResourceProperties']['Name']
     size = event['ResourceProperties']['Size']
@@ -95,7 +96,6 @@ def handler(event, context):
     }
 
     remote = 'data:application/json,' + json.dumps(remote_dict, separators=(",",":"))
-    physicalResourceId = "0"
 
     if requestType == 'Create':
       LOGGER.info("Request cloudbd create disk '%s' of size '%s'", disk, size)

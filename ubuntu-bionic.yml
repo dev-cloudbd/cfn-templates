@@ -27,40 +27,40 @@ Parameters:
     Type: AWS::EC2::Subnet::Id
 
 Mappings:
-  # Latest mappings updated Sat Aug 3, 2019
+  # Latest mappings updated Thu Aug 22, 2019
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-07d0cf3af28718ef8
+      HVM64: ami-064a0193585662d74
     us-east-2:
-      HVM64: ami-05c1fa8df71875112
+      HVM64: ami-021b7b04f1ac696c2
     us-west-1:
-      HVM64: ami-08fd8ae3806f09a08
+      HVM64: ami-056d04da775d124d7
     us-west-2:
-      HVM64: ami-06f2f779464715dc5
+      HVM64: ami-09a3d8a7177216dcf
     ca-central-1:
-      HVM64: ami-0d0eaed20348a3389
+      HVM64: ami-0bc1dd4eb012a451e
     eu-central-1:
-      HVM64: ami-0ac05733838eabc06
+      HVM64: ami-0cdab515472ca0bac
     eu-west-1:
-      HVM64: ami-06358f49b5839867c
+      HVM64: ami-01cca82393e531118
     eu-west-2:
-      HVM64: ami-077a5b1762a2dde35
+      HVM64: ami-0a7c91b6616d113b1
     eu-west-3:
-      HVM64: ami-0ad37dbbe571ce2a1
+      HVM64: ami-033e0056c336ecff0
     eu-north-1:
-      HVM64: ami-ada823d3
+      HVM64: ami-c37bf0bd
     ap-northeast-1:
-      HVM64: ami-0eeb679d57500a06c
+      HVM64: ami-0cb1c8cab7f5249b6
     ap-northeast-2:
-      HVM64: ami-0fd02cb7da42ee5e0
+      HVM64: ami-081626bfb3fbc9f49
     ap-southeast-1:
-      HVM64: ami-03b6f27628a4569c8
+      HVM64: ami-099d318f80eab7e94
     ap-southeast-2:
-      HVM64: ami-0edcec072887c2caa
+      HVM64: ami-08a648fb5cc86fb74
     ap-south-1:
-      HVM64: ami-009110a2bf8d7dd0a
+      HVM64: ami-0cf8402efdb171312
     sa-east-1:
-      HVM64: ami-02a3447be1ec3a38f
+      HVM64: ami-094c359b4d8c6a8ca
 
 Conditions:
   CloudBDUseHighperf: !Or
