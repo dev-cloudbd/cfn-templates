@@ -74,12 +74,18 @@ def get_disk_info(remote, disk):
   return dict(re.findall(r'(\S+)\s*=\s*(".*?"|\S+)', output))
 
 def handler(event, context):
+  physicalResourceId = "0"
   signal.alarm((context.get_remaining_time_in_millis() / 1000) - 1)
   LOGGER.info('Request received event:\n%s', json.dumps(event))
 
   try:
-    physicalResourceId = "0"
     requestType = event['RequestType']
+    if requestType == 'Update':
+      LOGGER.info("Request failed: cannot update a CloudBD disk")
+      physicalResourceId = event['PhysicalResourceId']
+      send(event, context, FAILED, None, physicalResourceId)
+      return
+
     disk = event['ResourceProperties']['Name']
     size = event['ResourceProperties']['Size']
 
@@ -109,10 +115,6 @@ def handler(event, context):
           'Uuid': physicalResourceId
         },
         physicalResourceId)
-    elif requestType == 'Update':
-      LOGGER.info("Request failed: cannot update a CloudBD disk")
-      physicalResourceId = event['PhysicalResourceId']
-      send(event, context, FAILED, None, physicalResourceId)
     elif requestType == 'Delete':
       physicalResourceId = event['PhysicalResourceId']
       LOGGER.info("Request cloudbd destroy disk '%s (%s)'", disk, physicalResourceId)
