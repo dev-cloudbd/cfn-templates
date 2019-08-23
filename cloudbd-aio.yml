@@ -300,7 +300,7 @@ Resources:
     Type: Custom::CloudBDDisk
     Properties:
       ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub '${AWS::StackName}'
+      Name: cloudbd-aio-testdisk
       Size: 128G
 
   TestServerRole:
