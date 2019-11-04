@@ -85,7 +85,7 @@ The [CloudBD S3 Remote template](https://github.com/dev-cloudbd/cfn-templates/bl
       * SSM Parameter Name: Enter the name of the SSM parameter that contains your CloudBD credentials.json
       * Customer KMS Key: If your credentials.json SSM parameter uses the default AWS key 'alias/aws/ssm', leave this parameter empty. Otherwise, enter the KMS Key ID (actual ID, not an alias) used to encrypt your SSM parameter.
       * Server-Side Encryption: Enable or disable server-side encryption for the S3 remote bucket that stores the CloudBD disk data
-      * HTTP Protocol: Choose wheather CloudBD disks should use HTTP or HTTPS when communicating with the S3 bucket
+      * HTTP Protocol: Choose whether CloudBD disks should use HTTP or HTTPS when communicating with the S3 bucket
 
       **VPC/EC2 Instance Parameters:**
 

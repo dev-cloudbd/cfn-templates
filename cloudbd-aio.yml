@@ -242,7 +242,7 @@ Resources:
   TestVpcInternetGateway:
     Type: AWS::EC2::InternetGateway
 
-  TestVpcInternetGatewayAtachment:
+  TestVpcInternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
       VpcId: !Ref TestVpc
@@ -255,7 +255,7 @@ Resources:
 
   TestVpcDefaultRoute:
     Type: AWS::EC2::Route
-    DependsOn: TestVpcInternetGatewayAtachment
+    DependsOn: TestVpcInternetGatewayAttachment
     Properties:
       RouteTableId: !Ref TestVpcRouteTable
       DestinationCidrBlock: 0.0.0.0/0

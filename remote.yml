@@ -137,6 +137,10 @@ Resources:
       MemorySize: 512
 
 Outputs:
+  StackName:
+    Description: Name of this remote stack
+    Value: !Ref 'AWS::StackName'
+
   CloudBDS3RemoteBucket:
     Description: CloudBD S3 Remote Bucket
     Value: !Ref CloudBDS3RemoteBucket
