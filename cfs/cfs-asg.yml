@@ -1,0 +1,670 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudBD File System (CFS) - Version 0.9 (Beta)'
+
+Parameters:
+  ###########################################################################
+  ## VPC and Networking Parameters
+  Vpc:
+    Description: VPC to deploy CFS into
+    Type: AWS::EC2::VPC::Id
+
+  AvailabilityZone:
+    Description: Availability zone for the CFS cluster
+    Type: AWS::EC2::AvailabilityZone::Name
+
+  SubnetCidr:
+    Description: CFS subnet IP CIDR range of form x.x.x.x/n.
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
+
+  ############################################################################
+  ## CFS Settings Parameters
+  ClusterName:
+    Description: Name of the CFS cluster (must be unique within the VPC)
+    Type: String
+    Default: cluster
+    AllowedPattern: '[a-zA-Z0-9]{1,24}'
+    ConstraintDescription: must be between 1 and 24 characters and in the set [A-Za-z0-9]
+
+  VolumeName:
+    Description: Name of the CFS volume
+    Type: String
+    Default: 'cv0'
+    AllowedPattern: '[a-zA-Z0-9]{1,24}'
+    ConstraintDescription: must be between 1 and 24 characters and in the set [A-Za-z0-9]
+
+  CacheSize:
+    Description: Size of the SSD cache for each CFS node (uses an EBS gp2 volume). Use CacheSze = 0 to disable SSD caching.
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 16384
+
+  SnapshotSupport:
+    Description: Enable support for volume snapshots.
+    Type: String
+    AllowedValues: ['yes', 'no']
+    Default: 'no'
+    ConstraintDescription: must be 'yes' or 'no'
+
+  PlacementStrategy:
+    Description: Placement group strategy for the CFS cluster nodes. 'cluster' provides lower latency between nodes and 'spread' provides more resilience to simulataneous node failures.
+    Type: String
+    AllowedValues: ['none', 'cluster', 'spread']
+    Default: 'none'
+
+  ############################################################################
+  ## CloudBD S3 Remote Parameters
+  CloudBDCredentialsParamName:
+    Description: SSM Parameter Name that contains your CloudBD credentials.
+    Type: String
+    Default: '/cloudbd/credentials.json'
+
+  CloudBDCredentialsCustomKeyId:
+    Description: Customer managed KMS Key ID (not the alias) used to encrypt
+                 your CloudBD credentials SSM parameter. Leave this parameter
+                 empty if using the default SSM key ('alias/aws/ssm').
+    Type: String
+    Default: ''
+
+  CloudBDServerSideEncryption:
+    Description: Use server-side encryption with SSE-S3 (AES256).
+    Type: String
+    AllowedValues: [ 'yes', 'no' ]
+    Default: 'no'
+
+  CloudBDHttpProtocol:
+    Description: Select the HTTP protocol to use when communicating with the
+                 remote. HTTPS encrypts all network traffic but will have
+                 higher CPU usage.
+    Type: String
+    AllowedValues: [ http, https ]
+    Default: http
+
+  ############################################################################
+  ## Node Administration Parameters
+  KeyPair:
+    Description: EC2 KeyPair for SSH access to the CFS nodes (requires CFSAdminSecurityGroup).
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 Key Pair
+
+  SsmSessionSupport:
+    Description: Enable support for SSM session access to the CFS nodes.
+    Type: String
+    AllowedValues: ['yes', 'no']
+    Default: 'yes'
+    ConstraintDescription: must be 'yes' or 'no'
+
+Mappings:
+  CFSNodeAmis:
+    us-east-2:
+      HVM64: ami-00906ba0146c01785
+
+Conditions:
+  CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
+  CloudBDUsePathBasedParameter: !Equals [!Select [0, !Split ['/', !Ref CloudBDCredentialsParamName]], '']
+  CloudBDUseCustomKey: !Not [!Equals [!Ref CloudBDCredentialsCustomKeyId, '']]
+  UsePlacementGroup: !Not [!Equals ['none', !Ref PlacementStrategy]]
+  UseCache: !Not [!Equals [!Ref CacheSize, 0]]
+  SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]
+
+Resources:
+  ##############################################################################
+  # Security Groups
+  CFSClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows attaching CFS volumes
+      VpcId: !Ref Vpc
+
+  CFSAdminSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows SSH access to CFS nodes
+
+  CFSNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ingress traffic to the CFS nodes for CFS clients and admins
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 24007
+          ToPort: 24008
+          SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
+          Description: Allow GlusterFS traffic from CFS clients
+        - IpProtocol: tcp
+          FromPort: 49152
+          ToPort: 49154
+          SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
+          Description: Allow GlusterFS brick traffic from CFS clients
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !GetAtt CFSAdminSecurityGroup.GroupId
+          Description: Allow SSH traffic from CFS admins
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          SourceSecurityGroupId: !GetAtt CFSAdminSecurityGroup.GroupId
+          Description: Allow ping traffic from CFS admins
+
+  CFSNodeGlusterFSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 24007
+      ToPort: 24007
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow GlusterFS traffic between CFS nodes
+
+  CFSNodeGlusterFSBrickSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 49152
+      ToPort: 49154
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow GlusterFS brick traffic between CFS nodes
+
+  CFSNodeSshSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow SSH traffic between CFS nodes
+
+  CFSNodePingSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: icmp
+      FromPort: 8
+      ToPort: -1
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow ping traffic between CFS nodes
+
+  CFSEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow CFS nodes to use VPC endpoints
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+
+  ##############################################################################
+  # Networking - Subnets and ENIs
+  CFSPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr
+      AvailabilityZone: !Ref AvailabilityZone
+
+  CFSPrivateSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  CFSPrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFSPrivateSubnet
+      RouteTableId: !Ref CFSPrivateSubnetRouteTable
+
+  CFSNode0Eni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: 'Static IP for CFS Node 0'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+
+  CFSNode1Eni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: 'Static IP for CFS Node 1'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+
+  CFSNode2Eni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: 'Static IP for CFS Node 2'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+
+  ##############################################################################
+  # Networking - VPC Endpoints
+  CFSS3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      RouteTableIds:
+        - !Ref CFSPrivateSubnetRouteTable
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+
+  CFSEc2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSCloudFormationEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.execute-api'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+      
+  CFSSsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSSsmMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: SsmSessionEnabled
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  ##############################################################################
+  # Networking - Route53 DNS
+  CFSHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: !Sub 'Hosted zone for ${ClusterName}.cfs.cloudbd.io'
+      Name: !Sub '${ClusterName}.cfs.cloudbd.io'
+      VPCs: [{VPCId: !Ref Vpc, VPCRegion: !Ref 'AWS::Region'}]
+
+  CFSRecordSetGroup:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: "DNS entries for CFS nodes"
+      HostedZoneId: !Ref CFSHostedZone
+      RecordSets:
+        - Name: !Sub '${ClusterName}.cfs.cloudbd.io'
+          ResourceRecords:
+            - !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress
+            - !GetAtt CFSNode1Eni.PrimaryPrivateIpAddress
+            - !GetAtt CFSNode2Eni.PrimaryPrivateIpAddress
+          Type: A
+          TTL: 60
+        - Name: !Sub 'node0.${ClusterName}.cfs.cloudbd.io'
+          ResourceRecords: [!GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]
+          Type: A
+          TTL: 60
+        - Name: !Sub 'node1.${ClusterName}.cfs.cloudbd.io'
+          ResourceRecords: [!GetAtt CFSNode1Eni.PrimaryPrivateIpAddress]
+          Type: A
+          TTL: 60
+        - Name: !Sub 'node2.${ClusterName}.cfs.cloudbd.io'
+          ResourceRecords: [!GetAtt CFSNode2Eni.PrimaryPrivateIpAddress]
+          Type: A
+          TTL: 60
+
+  ##############################################################################
+  # CloudBD S3 Remote - For high-performance storage of CFS data to S3
+  CloudBDS3RemoteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        !If
+          - CloudBDUseEncryption
+          - ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' }
+          - !Ref 'AWS::NoValue'
+
+  CloudBDS3RemotePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Grants access to the CloudBD S3 remote bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: 'ssm:GetParameter'
+            Resource: !If
+              - CloudBDUsePathBasedParameter
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${CloudBDCredentialsParamName}'
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${CloudBDCredentialsParamName}'
+          - !If # Allow decrypt of the CloudBD credentials.json parameter if using a custom key
+              - CloudBDUseCustomKey
+              - Effect: Allow
+                Action: 'kms:Decrypt'
+                Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${CloudBDCredentialsCustomKeyId}'
+              - !Ref 'AWS::NoValue'
+          - Effect: Allow
+            Action: 's3:ListBucket'
+            Resource: !GetAtt CloudBDS3RemoteBucket.Arn
+          - Effect: Allow
+            Action: 's3:HeadBucket'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 's3:PutObject'
+              - 's3:GetObject'
+              - 's3:DeleteObject'
+            Resource: !Sub '${CloudBDS3RemoteBucket.Arn}/cloudbd/*'
+
+  CloudBDDiskLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns: [ !Ref CloudBDS3RemotePolicy ]
+
+  CloudBDDiskLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'cloudbd-disk.handler'
+      Role: !GetAtt CloudBDDiskLambdaRole.Arn
+      Runtime: 'python2.7'
+      Environment:
+        Variables:
+          CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
+          CLOUDBD_CREDS_SSM_REGION: !Ref 'AWS::Region'
+          CLOUDBD_CREDS_SSM_PARAM: !Ref CloudBDCredentialsParamName
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/cloudbd-disk.zip'
+      Timeout: 900
+      MemorySize: 512
+
+  ##############################################################################
+  # CFS Node Resources
+  CFSNode0CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk0'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode1CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk1'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode2CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk2'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref CloudBDS3RemotePolicy
+        - !If
+          - SsmSessionEnabled
+          - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+          - !Ref 'AWS::NoValue'
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:AttachNetworkInterface'
+                Resource: '*'
+              - !If
+                - UseCache
+                - Effect: Allow
+                  Action:
+                    - 'ec2:DescribeVolumes'
+                  Resource: '*'
+                - !Ref 'AWS::NoValue'
+
+  CFSNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref CFSNodeRole]
+
+  CFSPlacementGroup:
+    Condition: UsePlacementGroup
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: !Ref PlacementStrategy
+
+  CFSLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !FindInMap [CFSNodeAmis, !Ref 'AWS::Region', HVM64]
+      SecurityGroups: [!Ref CFSNodeSecurityGroup]
+      InstanceType: t3.small # XXX TODO FIX ME to c5n.2xlarge
+      EbsOptimized: true
+      BlockDeviceMappings: !If
+        - UseCache
+        - - DeviceName: '/dev/sdh'
+            Ebs:
+              VolumeSize: !Ref CacheSize
+              VolumeType: 'gp2'
+        - !Ref 'AWS::NoValue'
+      IamInstanceProfile: !Ref CFSNodeInstanceProfile
+      InstanceMonitoring: false
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash -x
+            export AWS_REGION="${AWS::Region}"
+            export CFS_ENI_IDS='${CFSNode0Eni},${CFSNode1Eni},${CFSNode2Eni}'
+            export CFS_ENI_INTERFACE="ens6"
+            export CFS_ENI_DEVICE_INDEX="1"
+            export CFS_NODE_IPS='${CFSNode0Eni.PrimaryPrivateIpAddress},${CFSNode1Eni.PrimaryPrivateIpAddress},${CFSNode2Eni.PrimaryPrivateIpAddress}'
+            export CLOUDBD_CREDENTIALS_REGION="${AWS::Region}"
+            export CLOUDBD_CREDENTIALS_PARAM_NAME="${CloudBDCredentialsParamName}"
+            export CLOUDBD_REMOTE_NAME="remote"
+            export CLOUDBD_REMOTE_BUCKET="${CloudBDS3RemoteBucket}"
+            export CLOUDBD_REMOTE_HTTP_PROTOCOL="${CloudBDHttpProtocol}"
+            export CLOUDBD_DISK_NAMES='${CFSNode0CloudBDDisk.Name},${CFSNode1CloudBDDisk.Name},${CFSNode2CloudBDDisk.Name}'
+            export CFS_CLUSTER_NAME="${ClusterName}"
+            export CFS_VOLUME_NAMES="${VolumeName}"
+            export CFS_SNAPSHOT_SUPPORT="${SnapshotSupport}"
+            if [ "${CacheSize}" -gt 0 ]; then
+              export CFS_USE_CACHE="yes"
+              export CFS_CACHE_MAPPING_NAME="/dev/sdh"
+            else
+              export CFS_USE_CACHE="no"
+            fi
+            export CFS_EC2_ENDPOINT_URL="${CFSEc2EndpointUrl}"
+            export CFS_CLOUDFORMATION_ENDPOINT_URL="${CFSCloudFormationEndpointUrl}"
+            export CFS_API_ENDPOINT_URL="${CFSApiEndpointUrl}"
+            export CFS_SSM_ENDPOINT_URL="${CFSSsmEndpointUrl}"
+            export CFS_SSMMESSAGES_ENDPOINT_URL="${CFSSsmMessagesEndpointUrl}"
+
+            /root/configure.sh
+
+            /usr/local/bin/cfn-signal \
+                -e "$?" \
+                --region ${AWS::Region} \
+                --stack ${AWS::StackName} \
+                --resource CFSAutoScalingGroup \
+                --url "https://$CFS_CLOUDFORMATION_ENDPOINT_URL"
+          - CFSEc2EndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2Endpoint.DnsEntries]]]
+            CFSCloudFormationEndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSCloudFormationEndpoint.DnsEntries]]]
+            CFSApiEndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSApiEndpoint.DnsEntries]]]
+            CFSSsmEndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmEndpoint.DnsEntries]]]
+            CFSSsmMessagesEndpointUrl: !If
+              - SsmSessionEnabled
+              - !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmMessagesEndpoint.DnsEntries]]]
+              - !Sub 'ssmmessages.${AWS::Region}.amazonaws.com'
+
+  CFSAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones: [!Ref AvailabilityZone]
+      MinSize: '2'
+      MaxSize: '3'
+      DesiredCapacity: '3'
+      LaunchConfigurationName: !Ref CFSLaunchConfiguration
+      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
+      VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+    CreationPolicy:
+      ResourceSignal:
+        Count: '3'
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: 2
+        MinSuccessfulInstancesPercent: 66
+        WaitOnResourceSignals: true
+        PauseTime: PT15M
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'CloudBD Credentials'
+        Parameters:
+          - CloudBDCredentialsParamName
+          - CloudBDCredentialsCustomKeyId
+      - Label:
+          default: 'VPC and Network Settings'
+        Parameters:
+          - Vpc
+          - AvailabilityZone
+          - SubnetCidr
+      - Label:
+          default: 'CFS Settings'
+        Parameters:
+          - ClusterName
+          - VolumeName
+          - CacheSize
+          - SnapshotSupport
+          - PlacementStrategy
+      - Label:
+          default: 'S3 Backend Settings'
+        Parameters:
+          - CloudBDServerSideEncryption
+          - CloudBDHttpProtocol
+      - Label:
+          default: 'Admin Settings'
+        Parameters:
+          - KeyPair
+          - SsmSessionSupport
+    ParameterLabels:
+      Vpc:
+        default: 'VPC ID'
+      AvailabilityZone:
+        default: 'Availability Zone'
+      SubnetCidr:
+        default: 'Subnet CIDR'
+      ClusterName:
+        default: 'Cluster Name'
+      VolumeName:
+        default: 'Volume Name'
+      CacheSize:
+        default: 'Cache Size'
+      SnapshotSupport:
+        default: 'Snapshot Support'
+      PlacementStrategy:
+        default: 'Placement Strategy'
+      CloudBDCredentialsParamName:
+        default: 'SSM Parameter Name'
+      CloudBDCredentialsCustomKeyId:
+        default: 'Custom KMS Key'
+      CloudBDServerSideEncryption:
+        default: 'Server-Side Encryption'
+      CloudBDHttpProtocol:
+        default: 'HTTP Protocol'
+      KeyPair:
+        default: 'Key Pair'
+      SsmSessionSupport:
+        default: 'SSM Session Support'
+
+Outputs:
+  CFSClientSecurityGroup:
+    Description: Security group ID allowed to attach CFS volumes
+    Value: !GetAtt CFSClientSecurityGroup.GroupId
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClientSecurityGroup'
+
+  CFSAdminSecurityGroup:
+    Description: Security group ID allowed to SSH to CFS nodes
+    Value: !GetAtt CFSAdminSecurityGroup.GroupId
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSAdminSecurityGroup'
+
+  CFSClusterName:
+    Description: Name of the CFS cluster
+    Value: !Ref ClusterName
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClusterName'
+
+  CFSVolumeName:
+    Description: Name of the CFS volume
+    Value: !Ref VolumeName
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSVolumeName'
+
+  CFSClusterDnsName:
+    Description: DNS name of the CFS cluster
+    Value: !Sub '${ClusterName}.cfs.cloudbd.io'
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClusterDnsName'
+
+  CFSNodeDnsNames:
+    Description: DNS names of the CFS nodes
+    Value: !Sub 'node0.${ClusterName}.cfs.cloudbd.io,node1.${ClusterName}.cfs.cloudbd.io,node2.${ClusterName}.cfs.cloudbd.io'
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSNodeDnsNames'

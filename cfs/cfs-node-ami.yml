@@ -1,0 +1,876 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CFS Node AMI building template
+
+Parameters:
+  ############################################################################
+  ## VPC and Instance Parameters
+  SubnetId:
+    Description: AWS EC2 Subnet (requires access to public internet)
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: must be a valid subnet ID
+
+Mappings:
+  # Latest mappings updated Fri Oct 11, 2019
+  UbuntuBionic:
+    us-east-1:
+      HVM64: ami-0607bfda7f358db2f
+    us-east-2:
+      HVM64: ami-0bfd7d13d424429f7
+    us-west-1:
+      HVM64: ami-077aef51e4f1df3d7
+    us-west-2:
+      HVM64: ami-05b4756ea95a5d5a7
+    ca-central-1:
+      HVM64: ami-0a5d8bc3b2b741f1b
+    eu-central-1:
+      HVM64: ami-06e119a88cbc0685e
+    eu-west-1:
+      HVM64: ami-0c379e7083fbe41ab
+    eu-west-2:
+      HVM64: ami-0c3f128b7298d29b9
+    eu-west-3:
+      HVM64: ami-06aaed47c3fb20f64
+    eu-north-1:
+      HVM64: ami-0d0d5ea079e66f69c
+    ap-northeast-1:
+      HVM64: ami-04a1c725d8678428c
+    ap-northeast-2:
+      HVM64: ami-0df5bf8255e3a317f
+    ap-southeast-1:
+      HVM64: ami-0bba750772355e50d
+    ap-southeast-2:
+      HVM64: ami-06fa8e0449087ac9b
+    ap-south-1:
+      HVM64: ami-02f8233d95e935e59
+    sa-east-1:
+      HVM64: ami-0619116924c87f2f8
+
+Resources:
+  ##############################################################################
+  CFSNodeAmiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore']
+
+  CFSNodeAmiInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref CFSNodeAmiRole ]
+
+  CFSNodeAmi:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId: !Ref SubnetId
+      ImageId: !FindInMap [UbuntuBionic, !Ref 'AWS::Region', HVM64]
+      IamInstanceProfile: !Ref CFSNodeAmiInstanceProfile
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -x
+            export DEBIAN_FRONTEND=noninteractive
+
+            # install cloudbd
+            apt install -y cbd-client
+
+            # install glusterfs
+            apt install glusterfs-server
+
+            # upgrade packages
+            apt -y update
+            apt -y upgrade
+
+            # install python pip, cfn bootstrap package, and the aws cli
+            apt install -y --no-install-recommends python-pip python-setuptools python-wheel
+            pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+            pip install awscli
+
+            # perform AWS::CloudFormation::Init tasks
+            RESOURCE='CFSNodeAmi'
+            /usr/local/bin/cfn-init -v \
+                --region ${AWS::Region} \
+                --stack ${AWS::StackName} \
+                --resource ${!RESOURCE}
+
+            # reboot if needed and signal completion to CloudFormation
+            RET=$?
+            if [ "$RET" -eq "0" ] && [ -e /var/run/reboot-required ]; then
+              cat << EOF > /etc/cron.d/cfn-signal
+            SHELL=/bin/bash
+            PATH=/sbin:/bin:/usr/sbin:/usr/bin
+            MAILTO=root
+            HOME=/
+            @reboot root { /usr/local/bin/cfn-signal -e ${!RET} --region ${AWS::Region} --stack ${AWS::StackName} --resource ${!RESOURCE}; rm /etc/cron.d/cfn-signal; } > /dev/null
+            EOF
+              reboot
+            else
+              /usr/local/bin/cfn-signal -e ${!RET} \
+                  --region ${AWS::Region} \
+                  --stack ${AWS::StackName} \
+                  --resource ${!RESOURCE}
+            fi
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+          - Software
+          - Tuning
+          - Scripts
+        Software:
+          files:
+            /etc/apt/sources.list.d/cloudbd.list:
+              source: 'https://repo.cloudbd.io/bionic/cloudbd.list'
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /usr/share/keyrings/cloudbd-keyring.gpg:
+              source: https://repo.cloudbd.io/cloudbd-keyring.gpg
+              mode: "000644"
+              owner: "root"
+              group: "root"
+          commands:
+            01-install:
+              command: |
+                set -xe
+                add-apt-repository ppa:gluster/glusterfs-7
+                apt update
+                systemctl mask glusterfssharedstorage gluster-ta-volume
+                apt install -y cbd-client glusterfs-server lvm2 thin-provisioning-tools bcache-tools
+                systemctl disable --now glusterd
+        Tuning:
+          files:
+            /etc/amazon/ssm/amazon-ssm-agent.json.template:
+              content: |
+                {
+                  "Profile":{
+                    "ShareCreds" : true,
+                    "ShareProfile" : ""
+                  },
+                  "Mds": {
+                    "CommandWorkersLimit" : 5,
+                    "StopTimeoutMillis" : 20000,
+                    "Endpoint": "",
+                    "CommandRetryLimit": 15
+                  },
+                  "Ssm": {
+                    "Endpoint": "@SSM_ENDPOINT_URL@",
+                    "HealthFrequencyMinutes": 5,
+                    "CustomInventoryDefaultLocation" : "",
+                    "AssociationLogsRetentionDurationHours" : 24,
+                    "RunCommandLogsRetentionDurationHours" : 336,
+                    "SessionLogsRetentionDurationHours" : 336
+                  },
+                  "Mgs": {
+                    "Region": "",
+                    "Endpoint": "@SSMMESSAGES_ENDPOINT_URL@",
+                    "StopTimeoutMillis" : 20000,
+                    "SessionWorkersLimit" : 1000
+                  },
+                  "Agent": {
+                    "Region": "",
+                    "OrchestrationRootDir": ""
+                  },
+                  "Os": {
+                    "Lang": "en-US",
+                    "Name": "",
+                    "Version": "1"
+                  },
+                  "S3": {
+                    "Endpoint": "",
+                    "Region": "",
+                    "LogBucket":"",
+                    "LogKey":""
+                  },
+                  "Kms": {
+                    "Endpoint": ""
+                  }
+                }
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /etc/sysctl.d/55-cloudbd.conf:
+              content: |
+                # Start writing data to CloudBD as soon as possible to reduce buffer
+                # cache latency.
+                vm.dirty_background_bytes=2097152
+
+                # Request/response protocols like rpc and REST send some data
+                # and wait for a response so there will always be idle time.
+                # Dont shrink congestion window while idle.
+                net.ipv4.tcp_slow_start_after_idle=0
+
+                # Increase NAPI polling cycle max time to reduce 'squeezed' events
+                net.core.netdev_budget_usecs = 5000
+
+                # pfifo_fast works best on EC2 with request/response
+                net.core.default_qdisc = pfifo_fast
+
+                # Increase the max write buffer size for lower CPU overhead
+                net.core.wmem_max = 1056768
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /etc/systemd/system/glusterd.service:
+              content: |
+                [Unit]
+                Description=GlusterFS, a clustered file-system server
+                Requires=rpcbind.service
+                Wants=remote-fs-pre.target
+                After=network.target rpcbind.service
+                Before=remote-fs-pre.target
+
+                [Service]
+                Type=forking
+                PIDFile=/var/run/glusterd.pid
+                LimitNOFILE=65536
+                Environment="LOG_LEVEL=INFO"
+                EnvironmentFile=-/etc/default/glusterd
+                ExecStart=/usr/sbin/glusterd -p /var/run/glusterd.pid  --log-level $LOG_LEVEL $GLUSTERD_OPTIONS
+                KillMode=process
+                SuccessExitStatus=15
+
+                [Install]
+                WantedBy=multi-user.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /etc/systemd/system/glusterfsd.service:
+              content: |
+                [Unit]
+                Description=GlusterFS brick processes (stopping only)
+                After=network.target glusterd.service
+
+                [Service]
+                Type=oneshot
+                # glusterd starts the glusterfsd processed on-demand
+                # /bin/true will mark this service as started, RemainAfterExit keeps it active
+                ExecStart=/bin/true
+                RemainAfterExit=yes
+                # if there are no glusterfsd processes, a stop/reload should not give an error
+                ExecStop=/bin/sh -c "/usr/bin/killall --wait glusterfsd || /bin/true"
+                ExecReload=/bin/sh -c "/usr/bin/killall -HUP glusterfsd || /bin/true"
+
+                [Install]
+                WantedBy=multi-user.target glusterd.service
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /etc/systemd/system/glusterfssharedstorage.service.d/override.conf:
+              content: |
+                [Unit]
+                After=glusterd.service remote-fs-pre.target local-fs.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+        Scripts:
+          files:
+            /root/configure.sh:
+              content: |
+                #!/bin/bash -x
+                # Required IAM permissions:
+                #   ec2:AttachNetworkInterfaces - attach the static IP ENI
+                #   ec2:DescribeVolumes (only if CFS_USE_CACHE=yes) - identify the cache volume UUID
+                #   CloudBDS3RemotePolicy
+                #
+                # Input ENV vars:
+                #   AWS_REGION="AWS_REGION"
+                #   CFS_ENI_IDS="ID,ID,ID..."
+                #   CFS_ENI_INTERFACE="INTERFACE_NAME"
+                #   CFS_ENI_DEVICE_INDEX="N"
+                #   CFS_NODE_IPS="IP,IP,IP..."
+                #   CLOUDBD_CREDENTIALS_REGION="AWS_REGION"
+                #   CLOUDBD_CREDENTIALS_PARAM_NAME="SSM_PARAM_NAME"
+                #   CLOUDBD_REMOTE_NAME="REMOTE_NAME"
+                #   CLOUDBD_REMOTE_BUCKET="S3_BUCKET_NAME"
+                #   CLOUDBD_REMOTE_HTTP_PROTOCOL="http|https"
+                #   CLOUDBD_DISK_NAMES="DISK_NAME,DISK_NAME,DISK_NAME..."
+                #   CFS_CLUSTER_NAME="CLUSTER_NAME"
+                #   CFS_VOLUME_NAMES="VOLUME_NAME,VOLUME_NAME,VOLUME_NAME,..."
+                #   CFS_SNAPSHOT_SUPPORT="yes|no"
+                #   CFS_USE_CACHE="yes|no"
+                #   - if yes: CFS_CACHE_MAPPING_NAME="/dev/sdX"
+                #   CFS_EC2_ENDPOINT_URL="ENDPOINT_URL"
+                #   CFS_CLOUDFORMATION_ENDPOINT_URL="ENDPOINT_URL"
+                #   CFS_API_ENDPOINT_URL="ENDPOINT_URL"
+                #   CFS_SSM_ENDPOINT_URL="ENDPOINT_URL"
+                #   CFS_SSMMESSAGES_ENDPOINT_URL="ENDPOINT_URL"
+
+                # Retrieves ec2 metadata
+                get_meta() {
+                  attempts=60
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      return
+                    fi
+
+                    meta="$(curl -s -f http://169.254.169.254/latest/meta-data/$1)"
+                    if [ "$?" -gt 0 ]; then
+                      let attempts--
+                      sleep 0.5
+                      false
+                    fi
+                  done
+                  echo "$meta"
+                }
+                ##############################################################################
+                # Configure SSM Agent Endpoints
+                ##############################################################################
+                sed -i "s/@SSM_ENDPOINT_URL@/$CFS_SSM_ENDPOINT_URL/" /etc/amazon/ssm/amazon-ssm-agent.json.template
+                sed -i "s/@SSMMESSAGES_ENDPOINT_URL@/$CFS_SSMMESSAGES_ENDPOINT_URL/" /etc/amazon/ssm/amazon-ssm-agent.json.template
+                mv /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
+                systemctl restart snap.amazon-ssm-agent.*
+
+                ##############################################################################
+                # Configure Networking
+                ##############################################################################
+                IFS="," read -ra CFS_ENI_IDS <<< "$CFS_ENI_IDS"
+                IFS="," read -ra CFS_NODE_IPS <<< "$CFS_NODE_IPS"
+                CFS_INSTANCE_ID="$(get_meta 'instance-id')"
+
+                # Attach the node static IP ENI
+                attempts=180
+                false
+                while [ "$?" -gt 0 ]; do
+                  if [ "$attempts" -eq 0 ]; then
+                    exit 1
+                  fi
+
+                  # Loop over all ENIs until we find one available to attach and become the
+                  # Node ID associated with that ENI
+                  CFS_NODE_ID=0
+                  while [ "$CFS_NODE_ID" -lt "${#CFS_ENI_IDS[@]}" ]; do
+                    aws ec2 attach-network-interface \
+                        --network-interface-id "${CFS_ENI_IDS[CFS_NODE_ID]}" \
+                        --instance-id "$CFS_INSTANCE_ID" \
+                        --region "$AWS_REGION" \
+                        --device-index "$CFS_ENI_DEVICE_INDEX" \
+                        --endpoint-url "https://$CFS_EC2_ENDPOINT_URL"
+
+                    if [ "$?" -eq 0 ]; then
+                      break
+                    else
+                      let CFS_NODE_ID++
+                      false
+                    fi
+                  done
+
+                  if [ "$?" -gt 0 ]; then
+                    let attempts--
+                    sleep 1
+                    false
+                  fi
+                done
+
+                # Configure Linux networking for the attached ENI
+                CFS_NODE_IP="${CFS_NODE_IPS[CFS_NODE_ID]}"
+
+                attempts=30
+                CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
+                while test "x$CFS_ENI_HWADDR" = "x00:00:00:00:00:00" || test "x$CFS_ENI_HWADDR" = "x"; do
+                  if [ "$attempts" -eq 0 ]; then
+                    exit 1
+                  fi
+
+                  let attempts--
+                  sleep 1
+
+                  CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
+                done
+
+                CFS_ENI_CIDR="$(get_meta "network/interfaces/macs/$CFS_ENI_HWADDR/subnet-ipv4-cidr-block")"
+                CFS_ENI_CIDR_NETWORK="$(echo $CFS_ENI_CIDR | cut -d/ -f1)"
+                CFS_ENI_CIDR_PREFIX="$(echo $CFS_ENI_CIDR | cut -d/ -f2)"
+                CFS_ENI_ROUTER="$(( $(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f4) + 1))"
+                CFS_ENI_GATEWAY="$(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f1-3).$CFS_ENI_ROUTER"
+
+                cat << EOF > /etc/netplan/51-$CFS_ENI_INTERFACE.yaml
+                network:
+                  version: 2
+                  renderer: networkd
+                  ethernets:
+                    ens6:
+                      addresses:
+                        - $CFS_NODE_IP/$CFS_ENI_CIDR_PREFIX
+                      dhcp4: no
+                      routes:
+                       - to: 0.0.0.0/0
+                         via: $CFS_ENI_GATEWAY
+                         table: 1000
+                       - to: $CFS_ENI_CIDR
+                         via: 0.0.0.0
+                         scope: link
+                         table: 1000
+                      routing-policy:
+                        - from: $CFS_NODE_IP
+                          table: 1000
+                $(for IP in "${CFS_NODE_IPS[@]}"; do
+                    echo "        - to: $IP"
+                    echo "          table: 1000"
+                  done)
+                EOF
+                netplan --debug apply
+
+                # Set fixed hostnames for CFS node IPs
+                cat << EOF >> /etc/hosts
+                
+                # CFS Nodes
+                $(for ((ID = 0; ID < ${#CFS_NODE_IPS[@]}; ID++)); do
+                    echo "${CFS_NODE_IPS[ID]} node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
+                  done)
+                EOF
+
+                ##############################################################################
+                # Configure CloudBD Disk
+                ##############################################################################
+                CLOUDBD_REMOTE_NAME="remote"
+                IFS="," read -ra CLOUDBD_DISK_NAMES <<< "$CLOUDBD_DISK_NAMES"
+                CLOUDBD_DISK_NAME="${CLOUDBD_DISK_NAMES[CFS_NODE_ID]}"
+                CLOUDBD_DEV="/dev/mapper/$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"
+
+                # Deploy CloudBD credentials file
+                aws ssm get-parameter \
+                    --region "$CLOUDBD_CREDENTIALS_REGION" \
+                    --name "$CLOUDBD_CREDENTIALS_PARAM_NAME" \
+                    --with-decryption \
+                    --query Parameter.Value \
+                    --endpoint-url "https://$CFS_SSM_ENDPOINT_URL" \
+                    --output text > /etc/cloudbd/credentials.json
+                chown root:cloudbd /etc/cloudbd/credentials.json
+                chmod 640 /etc/cloudbd/credentials.json
+
+                # Configure the S3 remote
+                cat << EOF > /etc/cloudbd/remotes.d/$CLOUDBD_REMOTE_NAME.conf
+                type = aws_ec2_metadata
+                region = $AWS_REGION
+                bucket = $CLOUDBD_REMOTE_BUCKET
+                protocol = $CLOUDBD_REMOTE_HTTP_PROTOCOL
+                EOF
+
+                # Ensure that the disk exists and is readable
+                if ! cloudbd info "$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"; then
+                  exit 1
+                fi
+
+                # Attach the disk to this server
+                if ! grep -E -q "[[:space:]]$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME([[:space:]#]|\$)" /etc/cloudbd/cbdtab; then
+                  /bin/echo -E "nbd0 $CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME highperf,block_buffers=512,cache_buffers=50,swath_buffers=4096" >> /etc/cloudbd/cbdtab
+                fi
+
+                cbddisks_start "$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"
+
+                # Ensure the CloudBD device is attached
+                attempts=60
+                false
+                while [ "$?" -gt 0 ]; do
+                  if [ "$attempts" -eq 0 ]; then
+                    exit 1
+                  fi
+
+                  lsblk $CLOUDBD_DEV 2>/dev/null
+
+                  if [ "$?" -gt 0 ]; then
+                    let attempts--
+                    sleep 1
+                    false
+                  fi
+                done
+
+                ##############################################################################
+                # Configure LVM (PV and VG)
+                ##############################################################################
+                LVM_PV="$CLOUDBD_DEV"
+                LVM_VG="${CLOUDBD_DISK_NAME}_vg"
+
+                # Create pv and vg
+                if ! pvs "$LVM_PV" >/dev/null 2>&1; then
+                  pvcreate --dataalignment 2M "$LVM_PV"
+                fi
+                if ! vgs "$LVM_VG" >/dev/null 2>&1; then
+                  vgcreate --physicalextentsize 2M "$LVM_VG" "$LVM_PV"
+                fi
+
+                ##############################################################################
+                # Configure EBS Cache Disk (if enabled)
+                ##############################################################################
+                modprobe bcache
+                if [ "x$CFS_USE_CACHE" = "xyes" ]; then
+                  BCACHE_CACHE_NAME="cfs-cache"
+                  BCACHE_CACHE_DEV="/dev/disk/by-id/$BCACHE_CACHE_NAME"
+
+                  # Identify the EBS cache volume
+                  CFS_CACHE_VOL_ID="$(aws ec2 describe-volumes \
+                      --region "$AWS_REGION" \
+                      --filters Name=attachment.instance-id,Values="$CFS_INSTANCE_ID" \
+                                Name=attachment.device,Values="$CFS_CACHE_MAPPING_NAME" \
+                      --query "Volumes[*].{ID:VolumeId}" \
+                      --endpoint-url "https://$CFS_EC2_ENDPOINT_URL" \
+                      --output text | sed 's/-//')"
+
+                  cat << EOF > /etc/udev/rules.d/68-cfs-cache.rules
+                SUBSYSTEM=="block", ACTION=="add|change", ATTRS{serial}=="$CFS_CACHE_VOL_ID", \\
+                    SYMLINK+="disk/by-id/$BCACHE_CACHE_NAME", \\
+                    SYMLINK+="cfs/cache"
+                EOF
+
+                  udevadm control -R
+                  udevadm trigger /dev/disk/by-id/*"$CFS_CACHE_VOL_ID"*
+
+                  # Wait for udev naming
+                  attempts=10
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    lsblk "$BCACHE_CACHE_DEV" 2>/dev/null
+
+                    if [ "$?" -gt 0 ]; then
+                      udevadm trigger /dev/disk/by-id/*"$CFS_CACHE_VOL_ID"*
+                      let attempts--
+                      sleep 1
+                      false
+                    fi
+                  done
+
+                  # Create bcache cache device and register
+                  if ! blkid "$BCACHE_CACHE_DEV"; then
+                    make-bcache -w 4096 -b 2097152 -C "$BCACHE_CACHE_DEV"
+                  fi
+                  echo "$BCACHE_CACHE_DEV" > /sys/fs/bcache/register
+
+                  BCACHE_CACHE_CSET_UUID="$(bcache-super-show "$BCACHE_CACHE_DEV" | \
+                      grep -oe 'cset.uuid[[:space:]]\+[[:alnum:]-]\+' | sed -e 's/cset.uuid[[:space:]]\+//')"
+
+                fi
+
+                ##############################################################################
+                # Configure CFS Gluster Management Filesystem
+                ##############################################################################
+                LVM_GLUSTER_LV=".gluster_lv"
+                LVM_GLUSTER_DEV="/dev/mapper/$LVM_VG-$LVM_GLUSTER_LV"
+                # Create .gluster lv device if missing
+                if ! lvs "$LVM_VG/$LVM_GLUSTER_LV" >/dev/null 2>&1; then
+                  lvcreate -Zn -ay -L 128M -n "$LVM_GLUSTER_LV" "$LVM_VG"
+                fi
+
+                # Ensure gluster lv device is attached
+                attempts=60
+                false
+                while [ "$?" -gt 0 ]; do
+                  if [ "$attempts" -eq 0 ]; then
+                    exit 1
+                  fi
+
+                  lsblk $LVM_GLUSTER_DEV 2>/dev/null
+
+                  if [ "$?" -gt 0 ]; then
+                    let attempts--
+                    sleep 1
+                    false
+                  fi
+                done
+
+                if ! blkid "$LVM_GLUSTER_DEV"; then
+                  mkfs.ext4 -b 4096 -E \
+                      stride=512,stripe_width=512,lazy_itable_init=0,lazy_journal_init=0,packed_meta_blocks=1 \
+                      "$LVM_GLUSTER_DEV"
+                fi
+
+                # Hook the filesystem mount into the gluster systemd requirements
+                GLUSTER_MOUNT_DIR="/data/cfs/.gluster"
+                mkdir -p "$GLUSTER_MOUNT_DIR"
+                SYSTEMD_MOUNT_NAME="$(systemd-escape "${GLUSTER_MOUNT_DIR#/}").mount"
+                cat << EOF > "/etc/systemd/system/$SYSTEMD_MOUNT_NAME"
+                [Unit]
+                Requires=cbdsetup@${CLOUDBD_REMOTE_NAME}:${CLOUDBD_DISK_NAME}.service
+                Before=glusterd.service glusterfsd.service remote-fs.target
+                After=cbdsetup@${CLOUDBD_REMOTE_NAME}:${CLOUDBD_DISK_NAME}.service
+
+                [Mount]
+                Where=$GLUSTER_MOUNT_DIR
+                What=$LVM_GLUSTER_DEV
+                Type=ext4
+                Options=discard,commit=30
+
+                [Install]
+                RequiredBy=glusterd.service glusterfsd.service remote-fs.target
+                EOF
+
+                # Mount the filesystem
+                systemctl daemon-reload
+                systemctl enable --now "$SYSTEMD_MOUNT_NAME"
+
+                # Ensure the filesystem is mounted
+                attempts=10
+                false
+                while [ "$?" -gt 0 ]; do
+                  if [ "$attempts" -eq 0 ]; then
+                    exit 1
+                  fi
+
+                  mountpoint $GLUSTER_MOUNT_DIR
+
+                  if [ "$?" -gt 0 ]; then
+                    let attempts--
+                    sleep 1
+                    false
+                  fi
+                done 
+
+                # Link /var/lib/glusterd to the persistent gluster management volume
+                if [ -d "$GLUSTER_MOUNT_DIR/glusterd" ]; then
+                  rm -rf /var/lib/glusterd
+                else
+                  mv /var/lib/glusterd "$GLUSTER_MOUNT_DIR/glusterd"
+                fi
+                ln -s "$GLUSTER_MOUNT_DIR/glusterd" /var/lib/glusterd
+
+                ##############################################################################
+                # Configure CFS Volume Storage
+                ##############################################################################
+                IFS="," read -ra CFS_VOLUME_NAMES <<< "$CFS_VOLUME_NAMES"
+                for CFS_VOLUME_NAME in "${CFS_VOLUME_NAMES[@]}"; do
+                  ##############################################################################
+                  # Configure Volume LVM LVs
+                  ##############################################################################
+                  LVM_LV="${CFS_VOLUME_NAME}_lv"
+                  LVM_DEV="/dev/mapper/$LVM_VG-$LVM_LV"
+                  if ! lvs "$LVM_VG/$LVM_LV" >/dev/null 2>&1; then
+                    if [ "x$CFS_SNAPSHOT_SUPPORT" = "xyes" ]; then
+                      # Create thinpool and thin lv
+                      LVM_POOL="${CFS_VOLUME_NAME}_pool"
+                      if ! lvs "$LVM_VG/$LVM_POOL" >/dev/null 2>&1; then
+                        lvcreate -Zn -y -l 100%FREE --chunksize 2M -T --name "$LVM_POOL" "$LVM_VG"
+                      fi
+                      SIZE_MB="$(lvs "$LVM_VG/$LVM_POOL" -o LV_SIZE --noheadings --units m --nosuffix | tr -d ' ' |
+                          grep -o -e '^[[:digit:]]\+')"
+                      lvcreate -ay -r 16M -V "${SIZE_MB}m" -T "$LVM_VG/$LVM_POOL" -n "$LVM_LV"
+                    else
+                      # Create lv directly on vg
+                      lvcreate -Zn -ay -r 16M -l 100%FREE -n "$LVM_LV" "$LVM_VG"
+                    fi
+                  fi
+
+                  # Ensure volume lv device is attached
+                  attempts=60
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    lsblk $LVM_DEV 2>/dev/null
+
+                    if [ "$?" -gt 0 ]; then
+                      let attempts--
+                      sleep 1
+                      false
+                    fi
+                  done
+
+                  ##############################################################################
+                  # Configure bcache Backing Device
+                  ##############################################################################
+                  BCACHE_NAME="cfs-${CFS_CLUSTER_NAME}-disk${CFS_NODE_ID}-${CFS_VOLUME_NAME}"
+                  BCACHE_DEV="/dev/bcache/by-label/$BCACHE_NAME"
+                  PATH_NAME="cfs/$CFS_CLUSTER_NAME/disk$CFS_NODE_ID/$CFS_VOLUME_NAME"
+
+                  # Create the bcache backing device
+                  if ! blkid "$LVM_DEV"; then
+                    make-bcache -o 8192 -w 2097152 -b 2097152 -B "$LVM_DEV"
+                  fi
+
+                  # Generate udev rules for the bcache device (must be before 69-bcache rules file)
+                  if blkid -t TYPE="bcache" "$LVM_DEV" && ! [ -e "/etc/udev/rules.d/68-$BCACHE_NAME.rules" ]; then
+                    BCACHE_UUID="$(blkid -s UUID -o value "$LVM_DEV")"
+
+                    cat << EOF > "/etc/udev/rules.d/68-$BCACHE_NAME.rules"
+                SUBSYSTEM=="block", ACTION=="add|change", ENV{ID_FS_TYPE}=="bcache", ENV{ID_FS_UUID_ENC}=="$BCACHE_UUID", \\
+                    ATTR{bcache/label}="$BCACHE_NAME"
+                DRIVER=="bcache", ENV{CACHED_LABEL}=="$BCACHE_NAME", ATTR{queue/read_ahead_kb}="16384", ATTR{bcache/readahead}="124k", \\
+                    SYMLINK+="disk/by-id/$BCACHE_NAME", \\
+                    SYMLINK+="$PATH_NAME"
+                EOF
+                    udevadm control -R
+                  fi
+
+                  # Register the bcache backing device and clear any cached devices
+                  echo "$LVM_DEV" > /sys/fs/bcache/register
+                  LVM_DEV_SYSDIR="/sys/block/$(lsblk --noheadings --nodeps -l -o KNAME "$LVM_DEV")"
+                  echo "1" > "$LVM_DEV_SYSDIR/bcache/detach"
+
+                  # Attach the new EBS cache disk to the backing device (if use cache enabled)
+                  if [ "x$CFS_USE_CACHE" = "xyes" ]; then
+                    BCACHE_CACHE_STATE="$(cat "$LVM_DEV_SYSDIR/bcache/state")"
+                    if [ "$BCACHE_CACHE_STATE" = "no cache" ] || [ "$BCACHE_CACHE_STATE" = "clean" ] || [ "$BCACHE_CACHE_STATE" = "inconsistent" ]; then
+                      echo "$BCACHE_CACHE_CSET_UUID" > "$LVM_DEV_SYSDIR/bcache/attach"
+                    fi
+                  fi
+
+                  udevadm trigger "$LVM_DEV"
+                  echo "1" > "$LVM_DEV_SYSDIR/bcache/running"
+
+                  # Ensure the bcache backing device is attached
+                  attempts=10
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    lsblk $BCACHE_DEV 2>/dev/null
+
+                    if [ "$?" -gt 0 ]; then
+                      udevadm trigger "$LVM_DEV"
+                      let attempts--
+                      sleep 1
+                      false
+                    fi
+                  done
+
+                  ##############################################################################
+                  # Create and mount ext4 filesystem
+                  ##############################################################################
+                  if ! blkid "$BCACHE_DEV"; then
+                    mkfs.ext4 -b 4096 -T largefile4 -E \
+                        stride=512,stripe_width=512,lazy_itable_init=0,lazy_journal_init=0,packed_meta_blocks=1 \
+                        "$BCACHE_DEV"
+                  fi
+
+                  # Hook the filesystem mount into the gluster systemd requirements
+                  CFS_MOUNT_DIR="/data/$PATH_NAME"
+                  mkdir -p "$CFS_MOUNT_DIR"
+                  SYSTEMD_MOUNT_NAME="$(systemd-escape "${CFS_MOUNT_DIR#/}").mount"
+                  cat << EOF > "/etc/systemd/system/$SYSTEMD_MOUNT_NAME"
+                [Unit]
+                Requires=cbdsetup@${CLOUDBD_REMOTE_NAME}:${CLOUDBD_DISK_NAME}.service
+                Before=glusterd.service glusterfsd.service remote-fs.target
+                After=cbdsetup@${CLOUDBD_REMOTE_NAME}:${CLOUDBD_DISK_NAME}.service
+
+                [Mount]
+                Where=$CFS_MOUNT_DIR
+                What=$BCACHE_DEV
+                Type=ext4
+                Options=discard,commit=30
+
+                [Install]
+                RequiredBy=glusterd.service glusterfsd.service remote-fs.target
+                EOF
+
+                  # Mount the filesystem
+                  systemctl daemon-reload
+                  systemctl enable --now "$SYSTEMD_MOUNT_NAME"
+
+                  # Ensure the filesystem is mounted
+                  attempts=10
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    mountpoint $CFS_MOUNT_DIR
+
+                    if [ "$?" -gt 0 ]; then
+                      let attempts--
+                      sleep 1
+                      false
+                    fi
+                  done 
+
+                  # Recover from network failure during volume creation by deleting empty
+                  # .glusterfs and brick dirs
+                  rm -d "$CFS_MOUNT_DIR/brick/.glusterfs/" || true
+                  rm -d "$CFS_MOUNT_DIR/brick/" || true
+                done
+
+                ##############################################################################
+                # Start Gluster, peer the cluster, and create the volumes
+                ##############################################################################
+                systemctl enable --now glusterd
+                if [ "$CFS_NODE_ID" -eq 0 ]; then
+                  # Peer the cluster
+                  attempts=60
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    errors=0
+                    for ((ID = 0; ID < ${#CFS_ENI_IDS[@]}; ID++)); do
+                      gluster peer probe "node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
+                      if [ "$?" -gt 0 ]; then
+                        let errors++
+                      fi
+                    done
+
+                    if [ "$errors" -gt 0 ]; then
+                      let attempts--
+                      sleep 1
+                      false
+                    fi
+                  done
+
+                  # Create the volumes
+                  for CFS_VOLUME_NAME in "${CFS_VOLUME_NAMES[@]}"; do
+                    if ! gluster volume info "$CFS_VOLUME_NAME"; then
+                      CFS_BRICK_BASE_DIR="/data/cfs/$CFS_CLUSTER_NAME"
+                      CFS_VOLUME_BRICKS=""
+                      for ((ID = 0; ID < ${#CFS_ENI_IDS[@]}; ID++)); do
+                        CFS_VOLUME_BRICKS="$CFS_VOLUME_BRICKS node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io:$CFS_BRICK_BASE_DIR/disk$ID/$CFS_VOLUME_NAME/brick"
+                      done
+
+                      # Wait for all peers to be connected
+                      attempts=60
+                      false
+                      while [ "$?" -gt 0 ]; do
+                        if [ "$attempts" -eq 0 ]; then
+                          exit 1
+                        fi
+
+                        peers="$(gluster peer status | grep -c 'Peer in Cluster (Connected)')"
+                        let peers++ # +1 for ourselves, the localhost peer
+
+                        if [ "$peers" -lt "${#CFS_NODE_IPS[@]}" ]; then
+                          let attempts--
+                          sleep 5
+                          false
+                        fi
+                      done
+
+                      gluster volume create "$CFS_VOLUME_NAME" disperse 3 redundancy 1 $CFS_VOLUME_BRICKS
+
+                      if [ "$?" -gt 0 ]; then
+                        exit 1
+                      fi
+
+                      gluster volume set "$CFS_VOLUME_NAME" \
+                          performance.write-behind-window-size 8MB \
+                          performance.aggregate-size 1MB \
+                          performance.client-io-threads off \
+                          performance.read-ahead off \
+                          performance.io-cache off
+                    fi
+
+                    gluster volume start "$CFS_VOLUME_NAME"
+                  done
+                fi
+
+                exit 0
+              mode: "000755"
+              owner: "root"
+              group: "root"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
+
