@@ -1,0 +1,648 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Distributed Fio Tester (DFT) - A cluster of Fio servers for performing coordinated performance tests of a remote filesystem'
+
+Parameters:
+  Vpc:
+    Description: VPC to deploy DFT cluster into
+    Type: AWS::EC2::VPC::Id
+
+  SubnetId:
+    Description: Subnet to create the DFT clients on (requires access to public internet)
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: must be a valid subnet ID
+
+  NumClients:
+    Description: Number of DFT clients
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 16
+
+  InstanceType:
+    Description: DFT client instance type
+    Type: String
+    Default: c5n.2xlarge
+    AllowedValues: [a1.2xlarge, a1.4xlarge, a1.large, a1.medium, a1.xlarge, c1.medium, c1.xlarge, c3.2xlarge, c3.4xlarge, c3.8xlarge, c3.large, c3.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c4.large, c4.xlarge, c5.18xlarge, c5.2xlarge, c5.4xlarge, c5.9xlarge, c5.large, c5.xlarge, c5d.18xlarge, c5d.2xlarge, c5d.4xlarge, c5d.9xlarge, c5d.large, c5d.xlarge, c5n.18xlarge, c5n.2xlarge, c5n.4xlarge, c5n.9xlarge, c5n.large, c5n.xlarge, cc1.4xlarge, cc2.8xlarge, cg1.4xlarge, cr1.8xlarge, d2.2xlarge, d2.4xlarge, d2.8xlarge, d2.xlarge, f1.16xlarge, f1.2xlarge, f1.4xlarge, g2.2xlarge, g2.8xlarge, g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, h1.16xlarge, h1.2xlarge, h1.4xlarge, h1.8xlarge, hi1.4xlarge, hs1.8xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge, i2.xlarge, i3.16xlarge, i3.2xlarge, i3.4xlarge, i3.8xlarge, i3.large, i3.metal, i3.xlarge, i3en.12xlarge, i3en.24xlarge, i3en.2xlarge, i3en.3xlarge, i3en.6xlarge, i3en.large, i3en.metal, i3en.xlarge, m1.large, m1.medium, m1.small, m1.xlarge, m2.2xlarge, m2.4xlarge, m2.xlarge, m3.2xlarge, m3.large, m3.medium, m3.xlarge, m4.10xlarge, m4.16xlarge, m4.2xlarge, m4.4xlarge, m4.large, m4.xlarge, m5.12xlarge, m5.24xlarge, m5.2xlarge, m5.4xlarge, m5.large, m5.metal, m5.xlarge, m5a.12xlarge, m5a.24xlarge, m5a.2xlarge, m5a.4xlarge, m5a.large, m5a.xlarge, m5ad.12xlarge, m5ad.16xlarge, m5ad.24xlarge, m5ad.2xlarge, m5ad.4xlarge, m5ad.8xlarge, m5ad.large, m5ad.xlarge, m5d.12xlarge, m5d.24xlarge, m5d.2xlarge, m5d.4xlarge, m5d.large, m5d.metal, m5d.xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p3dn.24xlarge, r3.2xlarge, r3.4xlarge, r3.8xlarge, r3.large, r3.xlarge, r4.16xlarge, r4.2xlarge, r4.4xlarge, r4.8xlarge, r4.large, r4.xlarge, r5.12xlarge, r5.24xlarge, r5.2xlarge, r5.4xlarge, r5.large, r5.metal, r5.xlarge, r5a.12xlarge, r5a.24xlarge, r5a.2xlarge, r5a.4xlarge, r5a.large, r5a.xlarge, r5ad.12xlarge, r5ad.16xlarge, r5ad.24xlarge, r5ad.2xlarge, r5ad.4xlarge, r5ad.8xlarge, r5ad.large, r5ad.xlarge, r5d.12xlarge, r5d.24xlarge, r5d.2xlarge, r5d.4xlarge, r5d.large, r5d.metal, r5d.xlarge, t1.micro, t2.2xlarge, t2.large, t2.medium, t2.micro, t2.nano, t2.small, t2.xlarge, t3.2xlarge, t3.large, t3.medium, t3.micro, t3.nano, t3.small, t3.xlarge, t3a.2xlarge, t3a.large, t3a.medium, t3a.micro, t3a.nano, t3a.small, t3a.xlarge, u-12tb1.metal, u-6tb1.metal, u-9tb1.metal, x1.16xlarge, x1.32xlarge, x1e.16xlarge, x1e.2xlarge, x1e.32xlarge, x1e.4xlarge, x1e.8xlarge, x1e.xlarge, z1d.12xlarge, z1d.2xlarge, z1d.3xlarge, z1d.6xlarge, z1d.large, z1d.metal, z1d.xlarge]
+    ConstraintDescription: must be a valid EC2 instance type
+
+  SecurityGroupIds:
+    Description: EC2 security groups to add to the DFT clients
+    Type: List<AWS::EC2::SecurityGroup::Id>
+
+  MountType:
+    Description: Filesystem client type
+    Type: String
+    Default: glusterfs
+    AllowedValues: [glusterfs, nfs]
+
+  MountIpOrDns:
+    Description: Filesystem server IP address or DNS name
+    Type: String
+    Default: 'cluster.cfs.cloudbd.io'
+
+  MountVolume:
+    Description: Filesystem volume name or remote directory path
+    Type: String
+    Default: 'cv0'
+
+  MountOptions:
+    Description: Filesystem mount options
+    Type: String
+    Default: ''
+
+  MountPath:
+    Description: Local mount point
+    Type: String
+    Default: '/mnt'
+
+  KeyName:
+    Description: EC2 KeyPair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 Key Pair
+
+  SsmSessionSupport:
+    Description: Enable support for SSM session access to the DFT clients
+    Type: String
+    AllowedValues: ['yes', 'no']
+    Default: 'yes'
+    ConstraintDescription: must be 'yes' or 'no'
+
+Mappings:
+  # Latest mappings updated Fri Oct 11, 2019
+  UbuntuBionic:
+    us-east-1:
+      HVM64: ami-0607bfda7f358db2f
+    us-east-2:
+      HVM64: ami-0bfd7d13d424429f7
+    us-west-1:
+      HVM64: ami-077aef51e4f1df3d7
+    us-west-2:
+      HVM64: ami-05b4756ea95a5d5a7
+    ca-central-1:
+      HVM64: ami-0a5d8bc3b2b741f1b
+    eu-central-1:
+      HVM64: ami-06e119a88cbc0685e
+    eu-west-1:
+      HVM64: ami-0c379e7083fbe41ab
+    eu-west-2:
+      HVM64: ami-0c3f128b7298d29b9
+    eu-west-3:
+      HVM64: ami-06aaed47c3fb20f64
+    eu-north-1:
+      HVM64: ami-0d0d5ea079e66f69c
+    ap-northeast-1:
+      HVM64: ami-04a1c725d8678428c
+    ap-northeast-2:
+      HVM64: ami-0df5bf8255e3a317f
+    ap-southeast-1:
+      HVM64: ami-0bba750772355e50d
+    ap-southeast-2:
+      HVM64: ami-06fa8e0449087ac9b
+    ap-south-1:
+      HVM64: ami-02f8233d95e935e59
+    sa-east-1:
+      HVM64: ami-0619116924c87f2f8
+
+Conditions:
+  SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]
+  UseClient1: !Not [!Equals ['1', !Ref NumClients]]
+  UseClient2: !And [!Condition UseClient1, !Not [!Equals ['2', !Ref NumClients]]]
+  UseClient3: !And [!Condition UseClient2, !Not [!Equals ['3', !Ref NumClients]]]
+  UseClient4: !And [!Condition UseClient3, !Not [!Equals ['4', !Ref NumClients]]]
+  UseClient5: !And [!Condition UseClient4, !Not [!Equals ['5', !Ref NumClients]]]
+  UseClient6: !And [!Condition UseClient5, !Not [!Equals ['6', !Ref NumClients]]]
+  UseClient7: !And [!Condition UseClient6, !Not [!Equals ['7', !Ref NumClients]]]
+  UseClient8: !And [!Condition UseClient7, !Not [!Equals ['8', !Ref NumClients]]]
+  UseClient9: !And [!Condition UseClient8, !Not [!Equals ['9', !Ref NumClients]]]
+  UseClient10: !And [!Condition UseClient9, !Not [!Equals ['10', !Ref NumClients]]]
+  UseClient11: !And [!Condition UseClient10, !Not [!Equals ['11', !Ref NumClients]]]
+  UseClient12: !And [!Condition UseClient11, !Not [!Equals ['12', !Ref NumClients]]]
+  UseClient13: !And [!Condition UseClient12, !Not [!Equals ['13', !Ref NumClients]]]
+  UseClient14: !And [!Condition UseClient13, !Not [!Equals ['14', !Ref NumClients]]]
+  UseClient15: !And [!Condition UseClient14, !Not [!Equals ['15', !Ref NumClients]]]
+
+Resources:
+  ##############################################################################
+  DFTClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic between DFT clients
+      VpcId: !Ref Vpc
+
+  DFTClientSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt DFTClientSecurityGroup.GroupId
+      IpProtocol: -1
+      SourceSecurityGroupId: !GetAtt DFTClientSecurityGroup.GroupId
+      Description: Allow all traffic between DFT client nodes
+
+  DFTClientRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !If
+          - SsmSessionEnabled
+          - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+          - !Ref 'AWS::NoValue'
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeInstances'
+                Resource: '*'
+
+  DFTClientInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref DFTClientRole ]
+
+  DFTClientLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !FindInMap [UbuntuBionic, !Ref 'AWS::Region', HVM64]
+        KeyName: !Ref KeyName
+        SecurityGroupIds: !Split [ ',', !Sub ['${DFTClientSecurityGroup},${ExtraSecurityGroupIds}', {ExtraSecurityGroupIds: !Join [',', !Ref SecurityGroupIds]}]]
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash -x
+              export DEBIAN_FRONTEND=noninteractive
+
+              ##############################################################################
+              # Install software and updates
+              ##############################################################################
+              # upgrade packages
+              apt -y update
+              apt -y upgrade
+
+              # install python pip, cfn bootstrap package, and the aws cli
+              apt install -y --no-install-recommends python-pip python-setuptools python-wheel
+              pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+              pip install awscli
+
+              # install Gluster, NFS, and Fio
+              add-apt-repository -y ppa:gluster/glusterfs-7
+              apt update
+              apt install -y glusterfs-client nfs-common fio
+
+              ##############################################################################
+              # Add high performance network tuning sysctls
+              ##############################################################################
+              cat << EOF > /etc/sysctl.d/55-cloudbd.conf
+              # Start writing data to CloudBD as soon as possible to reduce buffer
+              # cache latency.
+              vm.dirty_background_bytes=2097152
+
+              # Request/response protocols like rpc and REST send some data
+              # and wait for a response so there will always be idle time.
+              # Dont shrink congestion window while idle.
+              net.ipv4.tcp_slow_start_after_idle=0
+
+              # Increase NAPI polling cycle max time to reduce 'squeezed' events
+              net.core.netdev_budget_usecs = 5000
+
+              # pfifo_fast works best on EC2 with request/response
+              net.core.default_qdisc = pfifo_fast
+
+              # Increase the max write buffer size for lower CPU overhead
+              net.core.wmem_max = 1056768
+              EOF
+
+              sysctl --system
+
+              ##############################################################################
+              # Configure filesystem mount
+              ##############################################################################
+              MOUNT_PATH='${MountPath}'
+              MOUNT_VOLUME='${MountVolume}'
+
+              mkdir -p "$MOUNT_PATH"
+              if ! grep -q "${MountIpOrDns}:/${!MOUNT_VOLUME#/}"; then
+                cat << EOF >> /etc/fstab
+              ${MountIpOrDns}:/${!MOUNT_VOLUME#/} $MOUNT_PATH ${MountType} _netdev,${MountOptions} 0 0
+              EOF
+
+                systemctl daemon-reload
+                mount $MOUNT_PATH
+              fi
+
+              ##############################################################################
+              # Configure Fio daemon
+              ##############################################################################
+              cat << EOF > /etc/systemd/system/fio.service
+              # /etc/systemd/system/fio.service
+              [Unit]
+              Description=Fio server daemon
+              Wants=network-online.target remote-fs.target
+              After=network-online.target remote-fs.target
+
+              [Service]
+              ExecStart=/usr/bin/fio --server
+
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+
+              systemctl daemon-reload
+              systemctl enable --now fio.service
+
+              ##############################################################################
+              # Configure Fio test scripts
+              ##############################################################################
+              mkdir -p /etc/fio
+              cat << EOF > /etc/fio/get-dft-clients
+              #!/bin/bash
+              aws ec2 describe-instances \
+                  --region ${AWS::Region} \
+                  --filters Name=instance.group-id,Values=${DFTClientSecurityGroup.GroupId} \
+                  --query 'Reservations[].Instances[].[PrivateIpAddress]' \
+                  --output text
+              EOF
+              chmod +x /etc/fio/get-dft-clients
+              ln -s /etc/fio/get-dft-clients /usr/local/bin/get-dft-clients
+
+              cat << EOF > /etc/fio/write.fio
+              # Sequential write test
+              [global]
+              directory=${MountPath}
+              runtime=30s
+              group_reporting
+
+              [write]
+              rw=write
+              ioengine=libaio
+              iodepth=8
+              numjobs=8
+              size=1G
+              blocksize=1M
+              direct=1
+              end_fsync=1
+              EOF
+
+              cat << EOF > /etc/fio/read.fio
+              # Sequential read test
+              [global]
+              directory=${MountPath}
+              runtime=30s
+              group_reporting
+
+              [read]
+              rw=read
+              ioengine=libaio
+              iodepth=16
+              numjobs=8
+              size=1G
+              blocksize=1M
+              direct=1
+              EOF
+
+              cat << EOF > /etc/fio/rw.fio
+              # Sequential mixed read/write test
+              [global]
+              directory=${MountPath}
+              runtime=30s
+              group_reporting
+
+              [rw]
+              rw=rw
+              rwmixread=75
+              ioengine=libaio
+              iodepth=16
+              numjobs=8
+              size=1G
+              blocksize=1M
+              direct=1
+              end_fsync=1
+              EOF
+
+              cat << EOF > /etc/fio/randwrite.fio
+              # Random write test
+              [global]
+              directory=${MountPath}
+              runtime=30s
+              group_reporting
+
+              [randwrite]
+              rw=randwrite
+              ioengine=libaio
+              iodepth=32
+              numjobs=1
+              size=8G
+              blocksize=64k
+              direct=1
+              end_fsync=1
+              EOF
+
+              cat << EOF > /etc/fio/randread.fio
+              # Random read test
+              [global]
+              directory=${MountPath}
+              runtime=30s
+              group_reporting
+
+              [random-read]
+              rw=randread
+              ioengine=libaio
+              iodepth=64
+              numjobs=1
+              size=8G
+              blocksize=64k
+              direct=1
+              EOF
+
+              cat << EOF > /etc/fio/randrw.fio
+              # Random mixed read/write test
+              [global]
+              directory=${MountPath}
+              runtime=30s
+              group_reporting
+
+              [randrw]
+              rw=randrw
+              rwmixread=75
+              ioengine=libaio
+              iodepth=64
+              numjobs=1
+              size=8G
+              blocksize=64k
+              direct=1
+              end_fsync=1
+              EOF
+
+              ##############################################################################
+              # Reboot if necessary
+              ##############################################################################
+              if [ -e /var/run/reboot-required ]; then
+                reboot
+              fi
+
+  DFTClient0:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 0'
+
+  DFTClient1:
+    Type: AWS::EC2::Instance
+    Condition: UseClient1
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 1'
+
+  DFTClient2:
+    Type: AWS::EC2::Instance
+    Condition: UseClient2
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 2'
+
+  DFTClient3:
+    Type: AWS::EC2::Instance
+    Condition: UseClient3
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 3'
+
+  DFTClient4:
+    Type: AWS::EC2::Instance
+    Condition: UseClient4
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 4'
+
+  DFTClient5:
+    Type: AWS::EC2::Instance
+    Condition: UseClient5
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 5'
+
+  DFTClient6:
+    Type: AWS::EC2::Instance
+    Condition: UseClient6
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 6'
+
+  DFTClient7:
+    Type: AWS::EC2::Instance
+    Condition: UseClient7
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 7'
+
+  DFTClient8:
+    Type: AWS::EC2::Instance
+    Condition: UseClient8
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 8'
+
+  DFTClient9:
+    Type: AWS::EC2::Instance
+    Condition: UseClient9
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 9'
+
+  DFTClient10:
+    Type: AWS::EC2::Instance
+    Condition: UseClient10
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 10'
+
+  DFTClient11:
+    Type: AWS::EC2::Instance
+    Condition: UseClient11
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 11'
+
+  DFTClient12:
+    Type: AWS::EC2::Instance
+    Condition: UseClient12
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 12'
+
+  DFTClient13:
+    Type: AWS::EC2::Instance
+    Condition: UseClient13
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 13'
+
+  DFTClient14:
+    Type: AWS::EC2::Instance
+    Condition: UseClient14
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 14'
+
+  DFTClient15:
+    Type: AWS::EC2::Instance
+    Condition: UseClient15
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DFTClientLaunchTemplate
+        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
+      SubnetId: !Ref SubnetId
+      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      Tags:
+        - Key: 'Name'
+          Value: 'DFT Client 15'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Cluster Settings'
+        Parameters:
+          - Vpc
+          - SubnetId
+          - NumClients
+          - InstanceType
+          - SecurityGroupIds
+      - Label:
+          default: 'Filesystem Settings'
+        Parameters:
+          - MountIpOrDns
+          - MountVolume
+          - MountType
+          - MountOptions
+          - MountPath
+      - Label:
+          default: 'Admin Settings'
+        Parameters:
+          - KeyName
+          - SsmSessionSupport
+    ParameterLabels:
+      Vpc:
+        default: 'VPC ID'
+      SubnetId:
+        default: 'Subnet ID'
+      NumClients:
+        default: 'Num of Clients'
+      InstanceType:
+        default: 'Instance Type'
+      SecurityGroupIds:
+        default: 'Security Groups'
+      MountIpOrDns:
+        default: 'Server'
+      MountVolume:
+        default: 'Volume'
+      MountType:
+        default: 'Mount Type'
+      MountOptions:
+        default: 'Mount Options'
+      MountPath:
+        default: 'Mount Point'
+      KeyName:
+        default: 'Key Name'
+      SsmSessionSupport:
+        default: 'SSM Session Support'
+

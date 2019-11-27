@@ -36,12 +36,19 @@ Parameters:
     AllowedPattern: '[a-zA-Z0-9]{1,24}'
     ConstraintDescription: must be between 1 and 24 characters and in the set [A-Za-z0-9]
 
-  CacheSize:
-    Description: Size of the SSD cache for each CFS node (uses an EBS gp2 volume). Use CacheSze = 0 to disable SSD caching.
+  NumNodes:
+    Description: Number of CFS nodes
     Type: Number
-    Default: 0
-    MinValue: 0
-    MaxValue: 16384
+    Default: 3
+    AllowedValues: [3,6,9,12]
+    ConstraintDescription: must be a multiple of 3 between 3 and 12
+
+  InstanceType:
+    Description: Instance type for the CFS cluster nodes
+    Type: String
+    Default: 'c5n.2xlarge'
+    AllowedValues: ['c5n.2xlarge', 'c5n.xlarge', 'c5.xlarge', 'm5.large', 't3.large']
+    ConstraintDescription: must be a supported instance type
 
   SnapshotSupport:
     Description: Enable support for volume snapshots.
@@ -98,10 +105,17 @@ Parameters:
     Default: 'yes'
     ConstraintDescription: must be 'yes' or 'no'
 
+  CloudWatchSupport:
+    Description: Enable support for recording node metrics and logs to CloudWatch.
+    Type: String
+    AllowedValues: ['yes', 'no']
+    Default: 'yes'
+    ConstraintDescription: must be 'yes' or 'no'
+
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-00906ba0146c01785
+      HVM64: ami-0fd435ca6de129a00
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
@@ -110,6 +124,11 @@ Conditions:
   UsePlacementGroup: !Not [!Equals ['none', !Ref PlacementStrategy]]
   UseCache: !Not [!Equals [!Ref CacheSize, 0]]
   SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]
+  CloudWatchEnabled: !Equals ['yes', !Ref CloudWatchSupport]
+  Use6Nodes: !Not [!Equals [!Ref NumNodes, '3']]
+  Use9Nodes: !And [!Condition Use6Nodes, !Not [!Equals [!Ref NumNodes, '6']]]
+  Use12Nodes: !And [!Condition Use9Nodes, !Not [!Equals [!Ref NumNodes, '9']]]
+  UseCache: !Equals ['0', '1'] # always false, bcache can have stability issues in detached cache state, future feature
 
 Resources:
   ##############################################################################
@@ -119,17 +138,33 @@ Resources:
     Properties:
       GroupDescription: Allows attaching CFS volumes
       VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Client Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
 
   CFSAdminSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Allows SSH access to CFS nodes
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Admin Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
 
   CFSNodeSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow ingress traffic to the CFS nodes for CFS clients and admins
+      GroupDescription: CFS internal use only (for CFS nodes)
       VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 24007
@@ -141,6 +176,11 @@ Resources:
           ToPort: 49154
           SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
           Description: Allow GlusterFS brick traffic from CFS clients
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
+          Description: Allow ping traffic from CFS clients
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
@@ -197,6 +237,11 @@ Resources:
     Properties:
       GroupDescription: Allow CFS nodes to use VPC endpoints
       VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Endpoint Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
@@ -211,6 +256,11 @@ Resources:
       VpcId: !Ref Vpc
       CidrBlock: !Ref SubnetCidr
       AvailabilityZone: !Ref AvailabilityZone
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Private Subnet (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
 
   CFSPrivateSubnetRouteTable:
     Type: AWS::EC2::RouteTable
@@ -229,6 +279,11 @@ Resources:
       Description: 'Static IP for CFS Node 0'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node0 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
 
   CFSNode1Eni:
     Type: AWS::EC2::NetworkInterface
@@ -236,6 +291,11 @@ Resources:
       Description: 'Static IP for CFS Node 1'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node1 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
 
   CFSNode2Eni:
     Type: AWS::EC2::NetworkInterface
@@ -243,6 +303,110 @@ Resources:
       Description: 'Static IP for CFS Node 2'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node2 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode3Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use6Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 3'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 3 - ${ClusterName}'
+
+  CFSNode4Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use6Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 4'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 4 - ${ClusterName}'
+
+  CFSNode5Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use6Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 5'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 5 - ${ClusterName}'
+
+  CFSNode6Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use9Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 6'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 6 - ${ClusterName}'
+
+  CFSNode7Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use9Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 7'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 7 - ${ClusterName}'
+
+  CFSNode8Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use9Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 8'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 8 - ${ClusterName}'
+
+  CFSNode9Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use12Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 9'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 9 - ${ClusterName}'
+
+  CFSNode10Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use12Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 10'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 10 - ${ClusterName}'
+
+  CFSNode11Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use12Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 11'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 11 - ${ClusterName}'
 
   ##############################################################################
   # Networking - VPC Endpoints
@@ -305,6 +469,28 @@ Resources:
       SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
+  CFSLoggingEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CloudWatchEnabled
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSMonitoringEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CloudWatchEnabled
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.monitoring'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
   ##############################################################################
   # Networking - Route53 DNS
   CFSHostedZone:
@@ -326,6 +512,15 @@ Resources:
             - !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress
             - !GetAtt CFSNode1Eni.PrimaryPrivateIpAddress
             - !GetAtt CFSNode2Eni.PrimaryPrivateIpAddress
+            - !If [Use6Nodes, !GetAtt CFSNode3Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use6Nodes, !GetAtt CFSNode4Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use6Nodes, !GetAtt CFSNode5Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !GetAtt CFSNode6Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !GetAtt CFSNode7Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !GetAtt CFSNode8Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
           Type: A
           TTL: 60
         - Name: !Sub 'node0.${ClusterName}.cfs.cloudbd.io'
@@ -340,6 +535,69 @@ Resources:
           ResourceRecords: [!GetAtt CFSNode2Eni.PrimaryPrivateIpAddress]
           Type: A
           TTL: 60
+        - !If
+            - Use6Nodes
+            - Name: !Sub 'node3.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode3Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use6Nodes
+            - Name: !Sub 'node4.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode4Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use6Nodes
+            - Name: !Sub 'node5.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode5Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use9Nodes
+            - Name: !Sub 'node6.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode6Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use9Nodes
+            - Name: !Sub 'node7.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode7Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use9Nodes
+            - Name: !Sub 'node8.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode8Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use12Nodes
+            - Name: !Sub 'node9.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode9Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use12Nodes
+            - Name: !Sub 'node10.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode10Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
+        - !If
+            - Use12Nodes
+            - Name: !Sub 'node11.${ClusterName}.cfs.cloudbd.io'
+              ResourceRecords: [!GetAtt CFSNode11Eni.PrimaryPrivateIpAddress]
+              Type: A
+              TTL: 60
+            - !Ref 'AWS::NoValue'
 
   ##############################################################################
   # CloudBD S3 Remote - For high-performance storage of CFS data to S3
@@ -441,6 +699,76 @@ Resources:
       Name: !Sub 'cfs_${ClusterName}_disk2'
       Size: '134217856M' # 128T + 128M
 
+  CFSNode3CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk3'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode4CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk4'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode5CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk5'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode6CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk6'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode7CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk7'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode8CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk8'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode9CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk9'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode10CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk10'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode11CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk11'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode12CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk12'
+      Size: '134217856M' # 128T + 128M
+
   CFSNodeRole:
     Type: AWS::IAM::Role
     Properties:
@@ -456,6 +784,10 @@ Resources:
         - !If
           - SsmSessionEnabled
           - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+          - !Ref 'AWS::NoValue'
+        - !If
+          - CloudWatchEnabled
+          - 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy'
           - !Ref 'AWS::NoValue'
       Policies:
         - PolicyName: "root"
@@ -490,7 +822,7 @@ Resources:
     Properties:
       ImageId: !FindInMap [CFSNodeAmis, !Ref 'AWS::Region', HVM64]
       SecurityGroups: [!Ref CFSNodeSecurityGroup]
-      InstanceType: t3.small # XXX TODO FIX ME to c5n.2xlarge
+      InstanceType: !Ref InstanceType
       EbsOptimized: true
       BlockDeviceMappings: !If
         - UseCache
@@ -501,6 +833,7 @@ Resources:
         - !Ref 'AWS::NoValue'
       IamInstanceProfile: !Ref CFSNodeInstanceProfile
       InstanceMonitoring: false
+      KeyName: !Ref KeyPair
       UserData:
         Fn::Base64: !Sub
           - |
@@ -530,6 +863,9 @@ Resources:
             export CFS_API_ENDPOINT_URL="${CFSApiEndpointUrl}"
             export CFS_SSM_ENDPOINT_URL="${CFSSsmEndpointUrl}"
             export CFS_SSMMESSAGES_ENDPOINT_URL="${CFSSsmMessagesEndpointUrl}"
+            export CFS_MONITORING_ENDPOINT_URL="${CFSMonitoringEndpointUrl}"
+            export CFS_LOGGING_ENDPOINT_URL="${CFSLoggingEndpointUrl}"
+            export CFS_CLOUDWATCH_SUPPORT="${CloudWatchSupport}"
 
             /root/configure.sh
 
@@ -547,6 +883,14 @@ Resources:
               - SsmSessionEnabled
               - !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmMessagesEndpoint.DnsEntries]]]
               - !Sub 'ssmmessages.${AWS::Region}.amazonaws.com'
+            CFSMonitoringEndpointUrl: !If
+              - CloudWatchEnabled
+              - !Select [1, !Split [':', !Select [0, !GetAtt CFSMonitoringEndpoint.DnsEntries]]]
+              - !Sub 'monitoring.${AWS::Region}.amazonaws.com'
+            CFSLoggingEndpointUrl: !If
+              - CloudWatchEnabled
+              - !Select [1, !Split [':', !Select [0, !GetAtt CFSLoggingEndpoint.DnsEntries]]]
+              - !Sub 'logs.${AWS::Region}.amazonaws.com'
 
   CFSAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -558,6 +902,10 @@ Resources:
       LaunchConfigurationName: !Ref CFSLaunchConfiguration
       PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
       VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      Tags:
+        - Key: 'Name'
+          PropagateAtLaunch: true
+          Value: !Sub 'CFS Node - ${ClusterName}'
     CreationPolicy:
       ResourceSignal:
         Count: '3'
@@ -584,6 +932,7 @@ Metadata:
           - Vpc
           - AvailabilityZone
           - SubnetCidr
+          - InstanceType
       - Label:
           default: 'CFS Settings'
         Parameters:
@@ -602,6 +951,7 @@ Metadata:
         Parameters:
           - KeyPair
           - SsmSessionSupport
+          - CloudWatchSupport
     ParameterLabels:
       Vpc:
         default: 'VPC ID'
@@ -609,6 +959,8 @@ Metadata:
         default: 'Availability Zone'
       SubnetCidr:
         default: 'Subnet CIDR'
+      InstanceType:
+        default: 'Instance Type'
       ClusterName:
         default: 'Cluster Name'
       VolumeName:
@@ -631,6 +983,8 @@ Metadata:
         default: 'Key Pair'
       SsmSessionSupport:
         default: 'SSM Session Support'
+      CloudWatchSupport:
+        default: 'CloudWatch Support'
 
 Outputs:
   CFSClientSecurityGroup:
