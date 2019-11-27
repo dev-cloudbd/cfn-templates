@@ -5,7 +5,7 @@ import json
 import subprocess
 import re
 import boto3
-from botocore.vendored import requests
+import requests
 
 os.environ['PATH'] = os.environ['PATH'] + ":" + os.environ.get('LAMBDA_TASK_ROOT', '.') + '/bin'
 
@@ -82,12 +82,12 @@ def delete_disk(remote, disk):
   subprocess.check_call(["cloudbd", "delete", "--creds=" + creds_path, "--remote=" + remote, "--disk=" + disk])
   
 def get_disk_info(remote, disk):
-  output = subprocess.check_output(["cloudbd", "info", "--remote=" + remote, "--disk=" + disk, "-e"])
+  output = subprocess.check_output(["cloudbd", "info", "--remote=" + remote, "--disk=" + disk, "-e"]).decode("utf-8")
   return dict(re.findall(r'(\S+)\s*=\s*(".*?"|\S+)', output))
 
 def handler(event, context):
   physicalResourceId = "0"
-  signal.alarm((context.get_remaining_time_in_millis() / 1000) - 1)
+  signal.alarm(int(context.get_remaining_time_in_millis() / 1000) - 1)
   LOGGER.info('Request received event:\n%s', json.dumps(event))
 
   try:

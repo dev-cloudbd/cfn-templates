@@ -217,7 +217,7 @@ Resources:
     Properties:
       Handler: 'cloudbd-disk.handler'
       Role: !GetAtt CloudBDDiskLambdaRole.Arn
-      Runtime: 'python2.7'
+      Runtime: 'python3.7'
       Environment:
         Variables:
           CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
