@@ -120,7 +120,7 @@ Resources:
         Software:
           files:
             /etc/apt/sources.list.d/cloudbd.list:
-              source: 'https://repo.dev.cloudbd.io/bionic/cloudbd.list' # XXX TODO FIX ME TO PROD REPO
+              source: 'https://repo.cloudbd.io/bionic/cloudbd.list'
               mode: "000644"
               owner: "root"
               group: "root"
@@ -231,7 +231,6 @@ Resources:
                 EnvironmentFile=-/etc/default/glusterd
                 ExecStart=/usr/sbin/glusterd -p /var/run/glusterd.pid  --log-level $LOG_LEVEL $GLUSTERD_OPTIONS
                 ExecStopPost=/bin/sh -c "/usr/share/glusterfs/scripts/stop-all-gluster-processes.sh || /bin/true"
-                ExecStopPost=/sbin/shutdown -h now
                 KillMode=process
                 SuccessExitStatus=15
 
@@ -287,6 +286,7 @@ Resources:
                 #
                 # Input ENV vars:
                 #   AWS_REGION="AWS_REGION"
+                #   CFS_NODE_GROUP="0|1|2|3"
                 #   CFS_ENI_IDS="ID,ID,ID..."
                 #   CFS_ENI_INTERFACE="INTERFACE_NAME"
                 #   CFS_ENI_DEVICE_INDEX="N"
@@ -329,82 +329,92 @@ Resources:
                   done
                   echo "$meta"
                 }
+
+                CFS_INSTANCE_ID="$(get_meta 'instance-id')"
+
                 ##############################################################################
                 # Configure SSM Agent Endpoints
                 ##############################################################################
-                sed -i "s/@SSM_ENDPOINT_URL@/$CFS_SSM_ENDPOINT_URL/" /etc/amazon/ssm/amazon-ssm-agent.json.template
-                sed -i "s/@SSMMESSAGES_ENDPOINT_URL@/$CFS_SSMMESSAGES_ENDPOINT_URL/" /etc/amazon/ssm/amazon-ssm-agent.json.template
-                mv /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
-                systemctl restart snap.amazon-ssm-agent.*
+                if [ -f /etc/amazon/ssm/amazon-ssm-agent.json.template ]; then
+                  sed -i "s/@SSM_ENDPOINT_URL@/$CFS_SSM_ENDPOINT_URL/" /etc/amazon/ssm/amazon-ssm-agent.json.template
+                  sed -i "s/@SSMMESSAGES_ENDPOINT_URL@/$CFS_SSMMESSAGES_ENDPOINT_URL/" /etc/amazon/ssm/amazon-ssm-agent.json.template
+                  mv /etc/amazon/ssm/amazon-ssm-agent.json.template /etc/amazon/ssm/amazon-ssm-agent.json
+                  systemctl restart snap.amazon-ssm-agent.*
+                fi
 
                 ##############################################################################
                 # Configure Networking
                 ##############################################################################
                 IFS="," read -ra CFS_ENI_IDS <<< "$CFS_ENI_IDS"
                 IFS="," read -ra CFS_NODE_IPS <<< "$CFS_NODE_IPS"
-                CFS_INSTANCE_ID="$(get_meta 'instance-id')"
+                CFS_NUM_NODES="${#CFS_ENI_IDS[@]}"
 
-                # Attach the node static IP ENI
-                CFS_NODE_ID="$(get_meta 'ami-launch-index')" # Avoid multi instance launch race
-                attempts=180
-                false
-                while [ "$?" -gt 0 ]; do
-                  if [ "$attempts" -eq 0 ]; then
-                    exit 1
-                  fi
+                if hostname | grep -qE "node[[:digit:]]+\.$CFS_CLUSTER_NAME.cfs.cloudbd.io"; then
+                  CFS_NODE_ID="$(hostname | grep -oP '(?>node)\K\d+')" # retrieve node id from hostname
+                else
+                  # Attach the node static IP ENI
+                  OFFSET=$((3 * CFS_NODE_GROUP))
+                  ID="$(get_meta 'ami-launch-index')" # Avoid multi instance launch race
+                  attempts=180
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
 
-                  # Loop over all ENIs until we find one available to attach and become the
-                  # Node ID associated with that ENI
-                  while [ "$CFS_NODE_ID" -lt "${#CFS_ENI_IDS[@]}" ]; do
-                    aws ec2 attach-network-interface \
-                        --network-interface-id "${CFS_ENI_IDS[CFS_NODE_ID]}" \
-                        --instance-id "$CFS_INSTANCE_ID" \
-                        --region "$AWS_REGION" \
-                        --device-index "$CFS_ENI_DEVICE_INDEX" \
-                        --endpoint-url "https://$CFS_EC2_ENDPOINT_URL"
+                    # Loop over all ENIs until we find one available to attach and become the
+                    # Node ID associated with that ENI
+                    while [ "$ID" -lt "3" ]; do
+                      aws ec2 attach-network-interface \
+                          --network-interface-id "${CFS_ENI_IDS[ID+OFFSET]}" \
+                          --instance-id "$CFS_INSTANCE_ID" \
+                          --region "$AWS_REGION" \
+                          --device-index "$CFS_ENI_DEVICE_INDEX" \
+                          --endpoint-url "https://$CFS_EC2_ENDPOINT_URL"
 
-                    if [ "$?" -eq 0 ]; then
-                      break
-                    else
-                      let CFS_NODE_ID++
+                      if [ "$?" -eq 0 ]; then
+                        break
+                      else
+                        let ID++
+                        false
+                      fi
+                    done
+
+                    if [ "$?" -gt 0 ]; then
+                      let attempts--
+                      sleep 1
+                      ID=0
                       false
                     fi
                   done
 
-                  if [ "$?" -gt 0 ]; then
+                  CFS_NODE_ID=$((ID + OFFSET))
+                  # Set local hostname
+                  hostnamectl set-hostname "node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
+
+                  # Configure Linux networking for the attached ENI
+                  CFS_NODE_IP="${CFS_NODE_IPS[CFS_NODE_ID]}"
+
+                  attempts=30
+                  CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
+                  while test "x$CFS_ENI_HWADDR" = "x00:00:00:00:00:00" || test "x$CFS_ENI_HWADDR" = "x"; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
                     let attempts--
                     sleep 1
-                    CFS_NODE_ID=0
-                    false
-                  fi
-                done
 
-                # Set local hostname
-                hostnamectl set-hostname "node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
+                    CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
+                  done
 
-                # Configure Linux networking for the attached ENI
-                CFS_NODE_IP="${CFS_NODE_IPS[CFS_NODE_ID]}"
+                  CFS_ENI_CIDR="$(get_meta "network/interfaces/macs/$CFS_ENI_HWADDR/subnet-ipv4-cidr-block")"
+                  CFS_ENI_CIDR_NETWORK="$(echo $CFS_ENI_CIDR | cut -d/ -f1)"
+                  CFS_ENI_CIDR_PREFIX="$(echo $CFS_ENI_CIDR | cut -d/ -f2)"
+                  CFS_ENI_ROUTER="$(( $(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f4) + 1))"
+                  CFS_ENI_GATEWAY="$(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f1-3).$CFS_ENI_ROUTER"
 
-                attempts=30
-                CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
-                while test "x$CFS_ENI_HWADDR" = "x00:00:00:00:00:00" || test "x$CFS_ENI_HWADDR" = "x"; do
-                  if [ "$attempts" -eq 0 ]; then
-                    exit 1
-                  fi
-
-                  let attempts--
-                  sleep 1
-
-                  CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
-                done
-
-                CFS_ENI_CIDR="$(get_meta "network/interfaces/macs/$CFS_ENI_HWADDR/subnet-ipv4-cidr-block")"
-                CFS_ENI_CIDR_NETWORK="$(echo $CFS_ENI_CIDR | cut -d/ -f1)"
-                CFS_ENI_CIDR_PREFIX="$(echo $CFS_ENI_CIDR | cut -d/ -f2)"
-                CFS_ENI_ROUTER="$(( $(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f4) + 1))"
-                CFS_ENI_GATEWAY="$(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f1-3).$CFS_ENI_ROUTER"
-
-                cat << EOF > /etc/netplan/51-$CFS_ENI_INTERFACE.yaml
+                  cat << EOF > /etc/netplan/51-$CFS_ENI_INTERFACE.yaml
                 network:
                   version: 2
                   renderer: networkd
@@ -429,44 +439,52 @@ Resources:
                     echo "          table: 1000"
                   done)
                 EOF
-                netplan --debug apply
+                  netplan --debug apply
 
-                # Set fixed hostnames for CFS node IPs
-                cat << EOF >> /etc/hosts
+                  # Set fixed hostnames for CFS node IPs
+                  cat << EOF >> /etc/hosts
                 
                 # CFS Nodes
-                $(for ((ID = 0; ID < ${#CFS_NODE_IPS[@]}; ID++)); do
+                $(for ((ID = 0; ID < $CFS_NUM_NODES; ID++)); do
                     echo "${CFS_NODE_IPS[ID]} node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
                   done)
                 EOF
+                fi
 
                 ##############################################################################
                 # Configure CloudBD Disk
                 ##############################################################################
-                CLOUDBD_REMOTE_NAME="remote"
                 IFS="," read -ra CLOUDBD_DISK_NAMES <<< "$CLOUDBD_DISK_NAMES"
                 CLOUDBD_DISK_NAME="${CLOUDBD_DISK_NAMES[CFS_NODE_ID]}"
                 CLOUDBD_DEV="/dev/mapper/$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"
 
                 # Deploy CloudBD credentials file
-                aws ssm get-parameter \
-                    --region "$CLOUDBD_CREDENTIALS_REGION" \
-                    --name "$CLOUDBD_CREDENTIALS_PARAM_NAME" \
-                    --with-decryption \
-                    --query Parameter.Value \
-                    --endpoint-url "https://$CFS_SSM_ENDPOINT_URL" \
-                    --output text > /etc/cloudbd/credentials.json
-                chown root:cloudbd /etc/cloudbd/credentials.json
-                chmod 640 /etc/cloudbd/credentials.json
+                if ! [ -e /etc/cloudbd/credentials.json ]; then
+                  aws ssm get-parameter \
+                      --region "$CLOUDBD_CREDENTIALS_REGION" \
+                      --name "$CLOUDBD_CREDENTIALS_PARAM_NAME" \
+                      --with-decryption \
+                      --query Parameter.Value \
+                      --endpoint-url "https://$CFS_SSM_ENDPOINT_URL" \
+                      --output text > /etc/cloudbd/credentials.json
+
+                  if [ "$?" -ne "0" ]; then
+                    exit 1
+                  fi
+                  chown root:cloudbd /etc/cloudbd/credentials.json
+                  chmod 640 /etc/cloudbd/credentials.json
+                fi
 
                 # Configure the S3 remote
-                cat << EOF > /etc/cloudbd/remotes.d/$CLOUDBD_REMOTE_NAME.conf
+                if ! [ -e "/etc/cloudbd/remotes.d/$CLOUDBD_REMOTE_NAME.conf" ]; then
+                  cat << EOF > /etc/cloudbd/remotes.d/$CLOUDBD_REMOTE_NAME.conf
                 type = aws_ec2_metadata
                 region = $AWS_REGION
                 bucket = $CLOUDBD_REMOTE_BUCKET
                 protocol = $CLOUDBD_REMOTE_HTTP_PROTOCOL
                 api_vpce_dns_name = $CFS_API_ENDPOINT_URL
                 EOF
+                fi
 
                 # Ensure that the disk exists and is readable
                 if ! cloudbd info "$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"; then
@@ -823,7 +841,7 @@ Resources:
                     fi
 
                     errors=0
-                    for ((ID = 0; ID < ${#CFS_ENI_IDS[@]}; ID++)); do
+                    for ((ID = 0; ID < CFS_NUM_NODES; ID++)); do
                       gluster peer probe "node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
                       if [ "$?" -gt 0 ]; then
                         let errors++
@@ -837,33 +855,33 @@ Resources:
                     fi
                   done
 
+                  # Wait for all peers to be connected
+                  attempts=60
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    peers="$(gluster peer status | grep -c 'Peer in Cluster (Connected)')"
+                    let peers++ # +1 for ourselves, the localhost peer
+
+                    if [ "$peers" -lt "$CFS_NUM_NODES" ]; then
+                      let attempts--
+                      sleep 5
+                      false
+                    fi
+                  done
+
                   # Create or expand the volumes as needed
                   for CFS_VOLUME_NAME in "${CFS_VOLUME_NAMES[@]}"; do
                     CFS_BRICK_BASE_DIR="/data/cfs/$CFS_CLUSTER_NAME"
-                    CURRENT_BRICKS=$(gluster volume info "$CFS_VOLUME_NAME" | grep -Po '(?<=Number of Bricks:)[[:space:]]*\d+')
+                    CURRENT_BRICKS=$(gluster volume info "$CFS_VOLUME_NAME" | grep -Po '(?<=Number of Bricks:)(.*=)?[[:space:]]*\K\d+')
                     if [ "$?" -ne 0 ]; then
                       # New volume
                       CFS_VOLUME_BRICKS=""
-                      for ((ID = 0; ID < ${#CFS_ENI_IDS[@]}; ID++)); do
+                      for ((ID = 0; ID < CFS_NUM_NODES; ID++)); do
                         CFS_VOLUME_BRICKS="$CFS_VOLUME_BRICKS node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io:$CFS_BRICK_BASE_DIR/disk$ID/$CFS_VOLUME_NAME/brick"
-                      done
-
-                      # Wait for all peers to be connected
-                      attempts=60
-                      false
-                      while [ "$?" -gt 0 ]; do
-                        if [ "$attempts" -eq 0 ]; then
-                          exit 1
-                        fi
-
-                        peers="$(gluster peer status | grep -c 'Peer in Cluster (Connected)')"
-                        let peers++ # +1 for ourselves, the localhost peer
-
-                        if [ "$peers" -lt "${#CFS_NODE_IPS[@]}" ]; then
-                          let attempts--
-                          sleep 5
-                          false
-                        fi
                       done
 
                       gluster volume create "$CFS_VOLUME_NAME" disperse 3 redundancy 1 $CFS_VOLUME_BRICKS
@@ -884,9 +902,9 @@ Resources:
                           client.event-threads 4 
 
                       gluster volume start "$CFS_VOLUME_NAME"
-                    elif [ "$CURRENT_BRICKS" -lt "${#CFS_ENI_IDS[@]}" ]; then
+                    elif [ "$CURRENT_BRICKS" -lt "$CFS_NUM_NODES" ]; then
                       NEW_CFS_VOLUME_BRICKS=""
-                      for ((ID=CURRENT_BRICKS; ID < ${#CFS_ENI_IDS[@]}; ID++)); do
+                      for ((ID=CURRENT_BRICKS; ID < CFS_NUM_NODES; ID++)); do
                         NEW_CFS_VOLUME_BRICKS="$NEW_CFS_VOLUME_BRICKS node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io:$CFS_BRICK_BASE_DIR/disk$ID/$CFS_VOLUME_NAME/brick"
                       done
                       gluster volume add-brick "$CFS_VOLUME_NAME" $NEW_CFS_VOLUME_BRICKS
@@ -895,7 +913,6 @@ Resources:
                       fi
                       gluster volume rebalance "$CFS_VOLUME_NAME" start
                     fi
-                  #XXX TODO set volume options
                   done
                 fi
 
