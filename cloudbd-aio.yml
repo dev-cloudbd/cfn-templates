@@ -76,40 +76,40 @@ Parameters:
     ConstraintDescription: must be a valid EC2 instance type
 
 Mappings:
-  # Latest mappings updated Thu Aug 22, 2019
+  # Latest mappings updated Tue Dec 10, 2019
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-064a0193585662d74
+      HVM64: ami-00a208c7cdba991ea
     us-east-2:
-      HVM64: ami-021b7b04f1ac696c2
+      HVM64: ami-059d836af932792c3
     us-west-1:
-      HVM64: ami-056d04da775d124d7
+      HVM64: ami-0f42d8c4eb586ccf7
     us-west-2:
-      HVM64: ami-09a3d8a7177216dcf
+      HVM64: ami-0a7d051a1c4b54f65
     ca-central-1:
-      HVM64: ami-0bc1dd4eb012a451e
+      HVM64: ami-0972a0d3135cf1fc0
     eu-central-1:
-      HVM64: ami-0cdab515472ca0bac
+      HVM64: ami-09356619876445425
     eu-west-1:
-      HVM64: ami-01cca82393e531118
+      HVM64: ami-04c58523038d79132
     eu-west-2:
-      HVM64: ami-0a7c91b6616d113b1
+      HVM64: ami-00622b440d92e55c0
     eu-west-3:
-      HVM64: ami-033e0056c336ecff0
+      HVM64: ami-0b70d1460d5c7a299
     eu-north-1:
-      HVM64: ami-c37bf0bd
+      HVM64: ami-005bc7d72deb72a3d
     ap-northeast-1:
-      HVM64: ami-0cb1c8cab7f5249b6
+      HVM64: ami-0f6b4f4104d26f399
     ap-northeast-2:
-      HVM64: ami-081626bfb3fbc9f49
+      HVM64: ami-02b4a5559ce53a570
     ap-southeast-1:
-      HVM64: ami-099d318f80eab7e94
+      HVM64: ami-07febfdfb4080320e
     ap-southeast-2:
-      HVM64: ami-08a648fb5cc86fb74
+      HVM64: ami-04a0f7552cff370ba
     ap-south-1:
-      HVM64: ami-0cf8402efdb171312
+      HVM64: ami-0245841fc4b40e22f
     sa-east-1:
-      HVM64: ami-094c359b4d8c6a8ca
+      HVM64: ami-049f5d88d2d436431
 
 Conditions:
   CloudBDUsePathBasedParameter: !Equals [!Select [0, !Split ['/', !Ref CloudBDCredentialsParamName]], '']

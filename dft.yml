@@ -15,8 +15,8 @@ Parameters:
     Description: Number of DFT clients
     Type: Number
     Default: 1
-    MinValue: 1
-    MaxValue: 16
+    MinValue: 0
+    MaxValue: 100
 
   InstanceType:
     Description: DFT client instance type
@@ -175,6 +175,8 @@ Resources:
         ImageId: !FindInMap [UbuntuBionic, !Ref 'AWS::Region', HVM64]
         KeyName: !Ref KeyName
         SecurityGroupIds: !Split [ ',', !Sub ['${DFTClientSecurityGroup},${ExtraSecurityGroupIds}', {ExtraSecurityGroupIds: !Join [',', !Ref SecurityGroupIds]}]]
+        IamInstanceProfile:
+          Arn: !GetAtt DFTClientInstanceProfile.Arn
         UserData:
           Fn::Base64:
             !Sub |
@@ -389,212 +391,20 @@ Resources:
                 reboot
               fi
 
-  DFTClient0:
-    Type: AWS::EC2::Instance
+  DFTAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      MinSize: '0'
+      MaxSize: !Ref NumClients
+      DesiredCapacity: !Ref NumClients
       LaunchTemplate:
         LaunchTemplateId: !Ref DFTClientLaunchTemplate
         Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
+      VPCZoneIdentifier: [!Ref SubnetId]
       Tags:
         - Key: 'Name'
-          Value: 'DFT Client 0'
-
-  DFTClient1:
-    Type: AWS::EC2::Instance
-    Condition: UseClient1
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 1'
-
-  DFTClient2:
-    Type: AWS::EC2::Instance
-    Condition: UseClient2
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 2'
-
-  DFTClient3:
-    Type: AWS::EC2::Instance
-    Condition: UseClient3
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 3'
-
-  DFTClient4:
-    Type: AWS::EC2::Instance
-    Condition: UseClient4
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 4'
-
-  DFTClient5:
-    Type: AWS::EC2::Instance
-    Condition: UseClient5
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 5'
-
-  DFTClient6:
-    Type: AWS::EC2::Instance
-    Condition: UseClient6
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 6'
-
-  DFTClient7:
-    Type: AWS::EC2::Instance
-    Condition: UseClient7
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 7'
-
-  DFTClient8:
-    Type: AWS::EC2::Instance
-    Condition: UseClient8
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 8'
-
-  DFTClient9:
-    Type: AWS::EC2::Instance
-    Condition: UseClient9
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 9'
-
-  DFTClient10:
-    Type: AWS::EC2::Instance
-    Condition: UseClient10
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 10'
-
-  DFTClient11:
-    Type: AWS::EC2::Instance
-    Condition: UseClient11
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 11'
-
-  DFTClient12:
-    Type: AWS::EC2::Instance
-    Condition: UseClient12
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 12'
-
-  DFTClient13:
-    Type: AWS::EC2::Instance
-    Condition: UseClient13
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 13'
-
-  DFTClient14:
-    Type: AWS::EC2::Instance
-    Condition: UseClient14
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 14'
-
-  DFTClient15:
-    Type: AWS::EC2::Instance
-    Condition: UseClient15
-    Properties:
-      LaunchTemplate:
-        LaunchTemplateId: !Ref DFTClientLaunchTemplate
-        Version: !GetAtt DFTClientLaunchTemplate.LatestVersionNumber
-      SubnetId: !Ref SubnetId
-      IamInstanceProfile: !Ref DFTClientInstanceProfile
-      Tags:
-        - Key: 'Name'
-          Value: 'DFT Client 15'
+          PropagateAtLaunch: true
+          Value: !Sub 'DFT Client'
 
 Metadata:
   AWS::CloudFormation::Interface:

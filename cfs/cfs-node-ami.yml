@@ -10,40 +10,40 @@ Parameters:
     ConstraintDescription: must be a valid subnet ID
 
 Mappings:
-  # Latest mappings updated Fri Oct 11, 2019
+  # Latest mappings updated Tue Dec 10, 2019
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-0607bfda7f358db2f
+      HVM64: ami-00a208c7cdba991ea
     us-east-2:
-      HVM64: ami-0bfd7d13d424429f7
+      HVM64: ami-059d836af932792c3
     us-west-1:
-      HVM64: ami-077aef51e4f1df3d7
+      HVM64: ami-0f42d8c4eb586ccf7
     us-west-2:
-      HVM64: ami-05b4756ea95a5d5a7
+      HVM64: ami-0a7d051a1c4b54f65
     ca-central-1:
-      HVM64: ami-0a5d8bc3b2b741f1b
+      HVM64: ami-0972a0d3135cf1fc0
     eu-central-1:
-      HVM64: ami-06e119a88cbc0685e
+      HVM64: ami-09356619876445425
     eu-west-1:
-      HVM64: ami-0c379e7083fbe41ab
+      HVM64: ami-04c58523038d79132
     eu-west-2:
-      HVM64: ami-0c3f128b7298d29b9
+      HVM64: ami-00622b440d92e55c0
     eu-west-3:
-      HVM64: ami-06aaed47c3fb20f64
+      HVM64: ami-0b70d1460d5c7a299
     eu-north-1:
-      HVM64: ami-0d0d5ea079e66f69c
+      HVM64: ami-005bc7d72deb72a3d
     ap-northeast-1:
-      HVM64: ami-04a1c725d8678428c
+      HVM64: ami-0f6b4f4104d26f399
     ap-northeast-2:
-      HVM64: ami-0df5bf8255e3a317f
+      HVM64: ami-02b4a5559ce53a570
     ap-southeast-1:
-      HVM64: ami-0bba750772355e50d
+      HVM64: ami-07febfdfb4080320e
     ap-southeast-2:
-      HVM64: ami-06fa8e0449087ac9b
+      HVM64: ami-04a0f7552cff370ba
     ap-south-1:
-      HVM64: ami-02f8233d95e935e59
+      HVM64: ami-0245841fc4b40e22f
     sa-east-1:
-      HVM64: ami-0619116924c87f2f8
+      HVM64: ami-049f5d88d2d436431
 
 Resources:
   ##############################################################################
@@ -146,7 +146,7 @@ Resources:
             /etc/amazon/ssm/amazon-ssm-agent.json.template:
               content: |
                 {
-                  "Profile":{
+                  "Profile": {
                     "ShareCreds" : true,
                     "ShareProfile" : ""
                   },
@@ -211,6 +211,12 @@ Resources:
 
                 # Increase the max write buffer size for lower CPU overhead
                 net.core.wmem_max = 1056768
+
+                # Increase system min free memory
+                vm.min_free_kbytes = 524288
+
+                # Skip apport because it doesn't handle drop root shared libs nicely
+                kernel.core_pattern = /var/crash/core.%e.%p
               mode: "000644"
               owner: "root"
               group: "root"
@@ -227,6 +233,7 @@ Resources:
                 Type=forking
                 PIDFile=/var/run/glusterd.pid
                 LimitNOFILE=65536
+                TimeoutStartSec=300
                 Environment="LOG_LEVEL=INFO"
                 EnvironmentFile=-/etc/default/glusterd
                 ExecStart=/usr/sbin/glusterd -p /var/run/glusterd.pid  --log-level $LOG_LEVEL $GLUSTERD_OPTIONS
@@ -274,6 +281,11 @@ Resources:
               mode: "000644"
               owner: "root"
               group: "root"
+          commands:
+            01-disable-apport:
+              command: |
+                set -xe
+                systemctl disable --now apport
         Scripts:
           files:
             /root/configure.sh:
@@ -493,7 +505,7 @@ Resources:
 
                 # Attach the disk to this server
                 if ! grep -E -q "[[:space:]]$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME([[:space:]#]|\$)" /etc/cloudbd/cbdtab; then
-                  /bin/echo -E "nbd0 $CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME highperf,block_buffers=512,cache_buffers=50,swath_buffers=4096" >> /etc/cloudbd/cbdtab
+                  /bin/echo -E "nbd0 $CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME gluster,threads=3,rest_threads=4,cache_buffers=128" >> /etc/cloudbd/cbdtab
                 fi
 
                 cbddisks_start "$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"
@@ -632,6 +644,7 @@ Resources:
                 What=$LVM_GLUSTER_DEV
                 Type=ext4
                 Options=discard,commit=30
+                TimeoutSec=300
 
                 [Install]
                 RequiredBy=glusterd.service glusterfsd.service remote-fs.target
@@ -795,6 +808,7 @@ Resources:
                 What=$FS_DEVICE
                 Type=ext4
                 Options=discard,commit=30
+                TimeoutSec=300
 
                 [Install]
                 RequiredBy=glusterd.service glusterfsd.service remote-fs.target
@@ -892,14 +906,20 @@ Resources:
 
                       gluster volume set "$CFS_VOLUME_NAME" \
                           storage.reserve 0 \
-                          storage.linux-aio on \
                           storage.batch-fsync-mode syncfs \
                           storage.batch-fsync-delay-usec 100000 \
                           performance.write-behind-window-size 8MB \
-                          performance.read-ahead-page-count 16 \
-                          performance.io-thread-count 64 \
-                          server.event-threads 4 \
-                          client.event-threads 4 
+                          performance.write-behind-trickling-writes off \
+                          performance.aggregate-size 1MB \
+                          performance.io-thread-count 16 \
+                          performance.high-prio-threads 16 \
+                          performance.normal-prio-threads 16 \
+                          performance.low-prio-threads 16 \
+                          performance.read-ahead off \
+                          performance.io-cache off \
+                          performance.client-io-threads off \
+                          performance.quick-read off \
+                          server.outstanding-rpc-limit 128
 
                       gluster volume start "$CFS_VOLUME_NAME"
                     elif [ "$CURRENT_BRICKS" -lt "$CFS_NUM_NODES" ]; then

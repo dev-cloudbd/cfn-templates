@@ -44,7 +44,7 @@ Parameters:
     ConstraintDescription: must be between 1 and 24 characters and in the set [A-Za-z0-9]
 
   VolumeName:
-    Description: Name of the CFS volume
+    Description: Name of the CFS volume (must be unique within the cluster)
     Type: String
     Default: 'cv0'
     AllowedPattern: '[a-zA-Z0-9]{1,24}'
@@ -110,7 +110,7 @@ Parameters:
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-06fd1a5277e38a084
+      HVM64: ami-0d14b67a1765cfaf6
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
@@ -852,7 +852,6 @@ Resources:
         Fn::Base64: !Sub
           - |
             #!/bin/bash -x
-
             CFS_INSTANCE_ID="$(curl -s http://169.254.169.254:/latest/meta-data/instance-id)"
             CFS_NODE_GROUP="$(aws ec2 describe-tags \
                 --filters Name=key,Values=CFSNodeGroup \
@@ -976,6 +975,13 @@ Resources:
         - Key: 'CFSClusterName'
           PropagateAtLaunch: true
           Value: !Ref ClusterName
+        - Key: 'CFSDependsOn'   # Force master node updates after all other groups
+          PropagateAtLaunch: false
+          Value: !Join
+            - ','
+            - - !If [Use6Nodes, !Ref CFSAutoScalingGroup1, !Ref 'AWS::NoValue']
+              - !If [Use9Nodes, !Ref CFSAutoScalingGroup2, !Ref 'AWS::NoValue']
+              - !If [Use12Nodes, !Ref CFSAutoScalingGroup3, !Ref 'AWS::NoValue']
     CreationPolicy:
       ResourceSignal:
         Count: '3'
