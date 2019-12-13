@@ -68,40 +68,40 @@ Parameters:
     ConstraintDescription: must be 'yes' or 'no'
 
 Mappings:
-  # Latest mappings updated Fri Oct 11, 2019
+  # Latest mappings updated Tue Dec 10, 2019
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-0607bfda7f358db2f
+      HVM64: ami-00a208c7cdba991ea
     us-east-2:
-      HVM64: ami-0bfd7d13d424429f7
+      HVM64: ami-059d836af932792c3
     us-west-1:
-      HVM64: ami-077aef51e4f1df3d7
+      HVM64: ami-0f42d8c4eb586ccf7
     us-west-2:
-      HVM64: ami-05b4756ea95a5d5a7
+      HVM64: ami-0a7d051a1c4b54f65
     ca-central-1:
-      HVM64: ami-0a5d8bc3b2b741f1b
+      HVM64: ami-0972a0d3135cf1fc0
     eu-central-1:
-      HVM64: ami-06e119a88cbc0685e
+      HVM64: ami-09356619876445425
     eu-west-1:
-      HVM64: ami-0c379e7083fbe41ab
+      HVM64: ami-04c58523038d79132
     eu-west-2:
-      HVM64: ami-0c3f128b7298d29b9
+      HVM64: ami-00622b440d92e55c0
     eu-west-3:
-      HVM64: ami-06aaed47c3fb20f64
+      HVM64: ami-0b70d1460d5c7a299
     eu-north-1:
-      HVM64: ami-0d0d5ea079e66f69c
+      HVM64: ami-005bc7d72deb72a3d
     ap-northeast-1:
-      HVM64: ami-04a1c725d8678428c
+      HVM64: ami-0f6b4f4104d26f399
     ap-northeast-2:
-      HVM64: ami-0df5bf8255e3a317f
+      HVM64: ami-02b4a5559ce53a570
     ap-southeast-1:
-      HVM64: ami-0bba750772355e50d
+      HVM64: ami-07febfdfb4080320e
     ap-southeast-2:
-      HVM64: ami-06fa8e0449087ac9b
+      HVM64: ami-04a0f7552cff370ba
     ap-south-1:
-      HVM64: ami-02f8233d95e935e59
+      HVM64: ami-0245841fc4b40e22f
     sa-east-1:
-      HVM64: ami-0619116924c87f2f8
+      HVM64: ami-049f5d88d2d436431
 
 Conditions:
   SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]

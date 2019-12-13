@@ -67,7 +67,7 @@ Resources:
   CFSNodeAmi:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t2.micro
+      InstanceType: t3.small
       SubnetId: !Ref SubnetId
       ImageId: !FindInMap [UbuntuBionic, !Ref 'AWS::Region', HVM64]
       IamInstanceProfile: !Ref CFSNodeAmiInstanceProfile
@@ -195,7 +195,7 @@ Resources:
             /etc/sysctl.d/55-cloudbd.conf:
               content: |
                 # Start writing data to CloudBD as soon as possible to reduce buffer
-                # cache latency.
+                # cache latency. CloudBD disks also have an internal cache.
                 vm.dirty_background_bytes=2097152
 
                 # Request/response protocols like rpc and REST send some data
@@ -203,8 +203,13 @@ Resources:
                 # Dont shrink congestion window while idle.
                 net.ipv4.tcp_slow_start_after_idle=0
 
+                # Increase high/low/default tcp buffer sizes
+                net.ipv4.tcp_rmem = 16384 87380 33554432
+                net.ipv4.tcp_wmem = 16384 131072 33554432
+
                 # Increase NAPI polling cycle max time to reduce 'squeezed' events
                 net.core.netdev_budget_usecs = 5000
+                net.core.netdev_budget = 2000
 
                 # pfifo_fast works best on EC2 with request/response
                 net.core.default_qdisc = pfifo_fast
@@ -435,6 +440,9 @@ Resources:
                       addresses:
                         - $CFS_NODE_IP/$CFS_ENI_CIDR_PREFIX
                       dhcp4: no
+                      mtu: 9001
+                      match:
+                        macaddress: $CFS_ENI_HWADDR
                       routes:
                        - to: 0.0.0.0/0
                          via: $CFS_ENI_GATEWAY
@@ -505,7 +513,7 @@ Resources:
 
                 # Attach the disk to this server
                 if ! grep -E -q "[[:space:]]$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME([[:space:]#]|\$)" /etc/cloudbd/cbdtab; then
-                  /bin/echo -E "nbd0 $CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME gluster,threads=3,rest_threads=4,cache_buffers=128" >> /etc/cloudbd/cbdtab
+                  /bin/echo -E "nbd0 $CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME gluster,multisock,cache_buffers=128" >> /etc/cloudbd/cbdtab
                 fi
 
                 cbddisks_start "$CLOUDBD_REMOTE_NAME:$CLOUDBD_DISK_NAME"
@@ -908,18 +916,20 @@ Resources:
                           storage.reserve 0 \
                           storage.batch-fsync-mode syncfs \
                           storage.batch-fsync-delay-usec 100000 \
-                          performance.write-behind-window-size 8MB \
+                          performance.write-behind-window-size 1MB \
                           performance.write-behind-trickling-writes off \
-                          performance.aggregate-size 1MB \
-                          performance.io-thread-count 16 \
-                          performance.high-prio-threads 16 \
-                          performance.normal-prio-threads 16 \
-                          performance.low-prio-threads 16 \
+                          performance.aggregate-size 512KB \
+                          performance.io-thread-count 64 \
+                          performance.high-prio-threads 64 \
+                          performance.normal-prio-threads 64 \
+                          performance.low-prio-threads 64 \
                           performance.read-ahead off \
                           performance.io-cache off \
                           performance.client-io-threads off \
                           performance.quick-read off \
-                          server.outstanding-rpc-limit 128
+                          server.outstanding-rpc-limit 256 \
+                          server.event-threads 4 \
+                          client.event-threads 4 
 
                       gluster volume start "$CFS_VOLUME_NAME"
                     elif [ "$CURRENT_BRICKS" -lt "$CFS_NUM_NODES" ]; then

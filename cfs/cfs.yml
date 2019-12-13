@@ -110,7 +110,7 @@ Parameters:
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-0d14b67a1765cfaf6
+      HVM64: ami-0d3bba468036094fb
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
