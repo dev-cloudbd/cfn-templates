@@ -124,7 +124,7 @@ Resources:
     Properties:
       Handler: 'cloudbd-disk.handler'
       Role: !GetAtt CloudBDDiskLambdaRole.Arn
-      Runtime: 'python2.7'
+      Runtime: 'python3.8'
       Environment:
         Variables:
           CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
@@ -132,7 +132,7 @@ Resources:
           CLOUDBD_CREDS_SSM_PARAM: !Ref CredentialsParamName
       Code:
         S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
-        S3Key: 'cfn-templates/cloudbd-disk.zip'
+        S3Key: 'cfn-templates/cloudbd-disk-3.0.3-1.zip'
       Timeout: 900
       MemorySize: 512
 
