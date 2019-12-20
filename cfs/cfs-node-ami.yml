@@ -120,7 +120,7 @@ Resources:
         Software:
           files:
             /etc/apt/sources.list.d/cloudbd.list:
-              source: 'https://repo.cloudbd.io/bionic/cloudbd.list'
+              source: https://repo.cloudbd.io/bionic/cloudbd.list
               mode: "000644"
               owner: "root"
               group: "root"
@@ -134,10 +134,27 @@ Resources:
               command: |
                 set -xe
                 add-apt-repository ppa:gluster/glusterfs-7
+                add-apt-repository ppa:nfs-ganesha/nfs-ganesha-3.0
+                # wrong shared lib in the ppa (version 3.2)
+                #add-apt-repository ppa:nfs-ganesha/libntirpc-3.0
+                # get from cache
+                wget https://launchpad.net/~nfs-ganesha/+archive/ubuntu/libntirpc-3.0/+build/18106993/+files/libntirpc3_3.0-ubuntu1~bionic2_amd64.deb -O /tmp/libntirpc3.deb
+                dpkg -i /tmp/libntirpc3.deb
                 apt update
-                systemctl mask glusterfssharedstorage gluster-ta-volume
-                apt install -y cbd-client glusterfs-server lvm2 thin-provisioning-tools bcache-tools fio iftop
-                systemctl disable --now glusterd
+
+                systemctl mask gluster-ta-volume
+                apt install -y cbd-client \
+                               glusterfs-server \
+                               lvm2 \
+                               thin-provisioning-tools \
+                               bcache-tools \
+                               fio \
+                               iftop \
+                               ctdb \
+                               nfs-ganesha-gluster \
+                               samba
+                systemctl disable --now glusterd smbd nfs-ganesha
+                
                 apt-get install -y --download-only gdb pstack strace
                 wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb
                 dpkg -i /tmp/amazon-cloudwatch-agent.deb
@@ -279,10 +296,108 @@ Resources:
               mode: "000644"
               owner: "root"
               group: "root"
+            /etc/systemd/system/ctdb.service.d/override.conf:
+              content: |
+                [Unit]
+                Requires=glusterfssharedstorage.service
+                After=glusterfssharedstorage.service
+
+                [Install]
+                WantedBy=glusterfssharedstorage.service
+              mode: "000644"
+              owner: "root"
+              group: "root"
             /etc/systemd/timesyncd.conf.d/amazontime.conf:
               content: |
                 [Time]
                 NTP=169.254.169.123
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /etc/ctdb/ctdbd.conf:
+              content: |
+                # Options to ctdbd, read by ctdbd_wrapper(1)
+                #
+                # See ctdbd.conf(5) for more information about CTDB configuration variables.
+
+                # Shared recovery lock file to avoid split brain.  No default.
+                #
+                # Do NOT run CTDB without a recovery lock file unless you know exactly
+                # what you are doing.
+                CTDB_RECOVERY_LOCK=/run/gluster/shared_storage/ctdb-lockfile
+
+                # List of nodes in the cluster.  Default is below.
+                CTDB_NODES=/etc/ctdb/nodes
+
+                # List of public addresses for providing NAS services.  No default.
+                CTDB_PUBLIC_ADDRESSES=/etc/ctdb/public_addresses
+
+                # What services should CTDB manage?  Default is none.
+                # CTDB_MANAGES_SAMBA=yes
+                # CTDB_MANAGES_WINBIND=yes
+                # CTDB_MANAGES_NFS=yes
+
+                # Raise the file descriptor limit for CTDB?
+                # CTDB_MAX_OPEN_FILES=10000
+
+                # Default is to use the log file below instead of syslog.
+                # CTDB_LOGGING=file:/var/log/log.ctdb
+
+                # Default log level is NOTICE.  Want less logging?
+                # CTDB_DEBUGLEVEL=ERR
+
+                # Set some CTDB tunable variables during CTDB startup?
+                # CTDB_SET_TDBMutexEnabled=0
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /etc/ctdb/events.d/09-aws.template:
+              content: |
+                #!/bin/sh
+
+                #################################
+                # aws event script for ctdb
+                # this adds/removes IPs from the
+                # default eni
+
+                [ -n "$CTDB_BASE" ] || \
+                    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
+
+                . "${CTDB_BASE}/functions"
+
+                loadconfig
+
+                [ -z "$CTDB_PUBLIC_ADDRESSES" ] && {
+                        CTDB_PUBLIC_ADDRESSES="${CTDB_BASE}/public_addresses"
+                }
+
+                [ ! -f "$CTDB_PUBLIC_ADDRESSES" ] && {
+                        if [ "$1" = "init" ]; then
+                                echo "No public addresses file found. Nothing to do for 09.aws"
+                        fi
+                        exit 0
+                }
+
+                ctdb_check_args "$@"
+
+                case "$1" in
+                takeip)
+                        iface=$2
+                        ip=$3
+                        maskbits=$4
+
+                        aws ec2 assign-private-ip-addresses \
+                            --region @AWS_REGION@ \
+                            --endpoint-url @EC2_ENDPOINT_URL@ \
+                            --allow-reassignment \
+                            --network-interface-id @ENI_ID@ \
+                            --private-ip-addresses "$ip" || {
+                                exit 1;
+                        }
+                        ;;
+                esac
+
+                exit 0
               mode: "000644"
               owner: "root"
               group: "root"
@@ -298,6 +413,7 @@ Resources:
                 #!/bin/bash -x
                 # Required IAM permissions:
                 #   ec2:AttachNetworkInterfaces - attach the static IP ENI
+                #   ec2:AssignPrivateIpAddress (if CFS_ENABLE_NFS or CFS_ENABLE_SAMBA) - add NFS/Samba virtual floating IPs
                 #   ec2:DescribeVolumes (only if CFS_USE_CACHE=yes) - identify the cache volume UUID
                 #   CloudBDS3RemotePolicy
                 #
@@ -308,6 +424,7 @@ Resources:
                 #   CFS_ENI_INTERFACE="INTERFACE_NAME"
                 #   CFS_ENI_DEVICE_INDEX="N"
                 #   CFS_NODE_IPS="IP,IP,IP..."
+                #   CFS_VIRTUAL_IPS="IP,IP,IP..."
                 #   CLOUDBD_CREDENTIALS_REGION="AWS_REGION"
                 #   CLOUDBD_CREDENTIALS_PARAM_NAME="SSM_PARAM_NAME"
                 #   CLOUDBD_REMOTE_NAME="REMOTE_NAME"
@@ -364,6 +481,7 @@ Resources:
                 ##############################################################################
                 IFS="," read -ra CFS_ENI_IDS <<< "$CFS_ENI_IDS"
                 IFS="," read -ra CFS_NODE_IPS <<< "$CFS_NODE_IPS"
+                IFS="," read -ra CFS_VIRTUAL_IPS <<< "$CFS_VIRTUAL_IPS"
                 CFS_NUM_NODES="${#CFS_ENI_IDS[@]}"
 
                 if hostname | grep -qE "node[[:digit:]]+\.$CFS_CLUSTER_NAME.cfs.cloudbd.io"; then
@@ -443,6 +561,7 @@ Resources:
                       mtu: 9001
                       match:
                         macaddress: $CFS_ENI_HWADDR
+                      set-name: ens6
                       routes:
                        - to: 0.0.0.0/0
                          via: $CFS_ENI_GATEWAY
@@ -458,7 +577,12 @@ Resources:
                     echo "        - to: $IP"
                     echo "          table: 1000"
                   done)
+                $(for IP in "${CFS_VIRTUAL_IPS[@]}"; do
+                    echo "        - from: $IP"
+                    echo "          table: 1000"
+                  done)
                 EOF
+                  netplan --debug generate
                   netplan --debug apply
 
                   # Set fixed hostnames for CFS node IPs
@@ -932,6 +1056,7 @@ Resources:
                           client.event-threads 4 
 
                       gluster volume start "$CFS_VOLUME_NAME"
+                      gluster volume set all cluster.enable-shared-storage enable
                     elif [ "$CURRENT_BRICKS" -lt "$CFS_NUM_NODES" ]; then
                       NEW_CFS_VOLUME_BRICKS=""
                       for ((ID=CURRENT_BRICKS; ID < CFS_NUM_NODES; ID++)); do
@@ -945,6 +1070,37 @@ Resources:
                     fi
                   done
                 fi
+
+                # CTDB High Availability
+                # NODE IPS
+                cat << EOF > /etc/ctdb/nodes
+                $(for IP in "${CFS_NODE_IPS[@]}"; do
+                    echo "$IP"
+                  done)
+                EOF
+
+                # VIRTUAL IP ADDRESSES
+                cat << EOF > /etc/ctdb/public_addresses
+                $(for IP in "${CFS_VIRTUAL_IPS[@]}"; do
+                    echo "$IP"
+                  done)
+                EOF
+
+                # AWS CTDB HOOK
+                if [ -f /etc/ctdb/events.d/09-aws.template ]; then
+                  sed -i "s|@EC2_ENDPOINT_URL@|https://$CFS_EC2_ENDPOINT_URL|" /etc/ctdb/events.d/09-aws.template
+                  sed -i "s|@AWS_REGION@|$AWS_REGION|" /etc/ctdb/events.d/09-aws.template
+                  sed -i "s|@ENI_ID@|${CFS_ENI_IDS[CFS_NODE_ID]}|" /etc/ctdb/events.d/09-aws.template
+                  mv /etc/ctdb/events.d/09-aws.template /etc/ctdb/events.d/09-aws
+                  chmod a+x /etc/ctdb/events.d/09-aws
+                  systemctl enable ctdb
+                fi
+
+                if ! grep -q gluster_shared_storage /etc/fstab; then
+                  echo "node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io:/gluster_shared_storage /var/run/gluster/shared_storage/ glusterfs defaults 0 0" >> /etc/fstab
+                  systemctl daemon-reload
+                fi
+                systemctl enable --now glusterfssharedstorage
 
                 # Metrics and Logs
                 if [ "$CFS_CLOUDWATCH_SUPPORT" = "yes" ]; then

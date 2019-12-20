@@ -110,7 +110,7 @@ Parameters:
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-0d3bba468036094fb
+      HVM64: ami-01663872a07cfa87f
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
@@ -206,6 +206,16 @@ Resources:
       SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
       Description: Allow GlusterFS brick traffic between CFS nodes
 
+  CFSNodeGlusterFSHASecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 4379
+      ToPort: 4379
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow GlusterFS brick traffic between CFS nodes
+
   CFSNodeSshSecurityGroupIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -273,6 +283,7 @@ Resources:
       Description: 'Static IP for CFS Node 0'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 0 ENI (${ClusterName})'
@@ -285,6 +296,7 @@ Resources:
       Description: 'Static IP for CFS Node 1'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 1 ENI (${ClusterName})'
@@ -297,6 +309,7 @@ Resources:
       Description: 'Static IP for CFS Node 2'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 2 ENI (${ClusterName})'
@@ -310,6 +323,7 @@ Resources:
       Description: 'Static IP for CFS Node 3'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 3 ENI (${ClusterName})'
@@ -323,6 +337,7 @@ Resources:
       Description: 'Static IP for CFS Node 4'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 4 ENI (${ClusterName})'
@@ -336,6 +351,7 @@ Resources:
       Description: 'Static IP for CFS Node 5'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 5 ENI - (${ClusterName})'
@@ -349,6 +365,7 @@ Resources:
       Description: 'Static IP for CFS Node 6'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 6 ENI (${ClusterName})'
@@ -362,6 +379,7 @@ Resources:
       Description: 'Static IP for CFS Node 7'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 7 ENI (${ClusterName})'
@@ -375,6 +393,7 @@ Resources:
       Description: 'Static IP for CFS Node 8'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 8 ENI (${ClusterName})'
@@ -388,6 +407,7 @@ Resources:
       Description: 'Static IP for CFS Node 9'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 9 ENI (${ClusterName})'
@@ -401,6 +421,7 @@ Resources:
       Description: 'Static IP for CFS Node 10'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 10 ENI (${ClusterName})'
@@ -414,6 +435,7 @@ Resources:
       Description: 'Static IP for CFS Node 11'
       GroupSet: [!Ref CFSNodeSecurityGroup]
       SubnetId: !Ref CFSPrivateSubnet
+      SecondaryPrivateIpAddressCount: 1
       Tags:
         - Key: 'Name'
           Value: !Sub 'CFS Node 11 ENI (${ClusterName})'
@@ -533,6 +555,22 @@ Resources:
             - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
             - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
             - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+          Type: A
+          TTL: 60
+        - Name: !Sub 'vip.${ClusterName}.cfs.cloudbd.io'
+          ResourceRecords:
+            - !Select [0, !GetAtt CFSNode0Eni.SecondaryPrivateIpAddresses]
+            - !Select [0, !GetAtt CFSNode1Eni.SecondaryPrivateIpAddresses]
+            - !Select [0, !GetAtt CFSNode2Eni.SecondaryPrivateIpAddresses]
+            - !If [Use6Nodes, !Select [0, !GetAtt CFSNode3Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use6Nodes, !Select [0, !GetAtt CFSNode4Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use6Nodes, !Select [0, !GetAtt CFSNode5Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !Select [0, !GetAtt CFSNode6Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !Select [0, !GetAtt CFSNode7Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !Select [0, !GetAtt CFSNode8Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !Select [0, !GetAtt CFSNode9Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !Select [0, !GetAtt CFSNode10Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !Select [0, !GetAtt CFSNode11Eni.SecondaryPrivateIpAddress], !Ref 'AWS::NoValue']
           Type: A
           TTL: 60
         - Name: !Sub 'node0.${ClusterName}.cfs.cloudbd.io'
@@ -679,7 +717,7 @@ Resources:
     Properties:
       Handler: 'cloudbd-disk.handler'
       Role: !GetAtt CloudBDDiskLambdaRole.Arn
-      Runtime: 'python2.7'
+      Runtime: 'python3.8'
       Environment:
         Variables:
           CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
@@ -687,7 +725,7 @@ Resources:
           CLOUDBD_CREDS_SSM_PARAM: !Ref CloudBDCredentialsParamName
       Code:
         S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
-        S3Key: 'cfn-templates/cloudbd-disk.zip'
+        S3Key: 'cfn-templates/cloudbd-disk-3.0.3-1.zip'
       Timeout: 900
       MemorySize: 512
       Tags:
@@ -819,6 +857,9 @@ Resources:
               - Effect: Allow
                 Action: 'ec2:DescribeTags' # Used to identify autoscaling node group number
                 Resource: '*'
+              - Effect: Allow
+                Action: 'ec2:AssignPrivateIpAddresses'
+                Resource: '*'
               - !If
                 - UseCache
                 - Effect: Allow
@@ -867,6 +908,7 @@ Resources:
             export CFS_ENI_INTERFACE="ens6"
             export CFS_ENI_DEVICE_INDEX="1"
             export CFS_NODE_IPS='${CFSNodeIps}'
+            export CFS_VIRTUAL_IPS='${CFSVirtualIps}'
             export CLOUDBD_CREDENTIALS_REGION="${AWS::Region}"
             export CLOUDBD_CREDENTIALS_PARAM_NAME="${CloudBDCredentialsParamName}"
             export CLOUDBD_REMOTE_NAME="remote"
@@ -924,6 +966,20 @@ Resources:
                 - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
                 - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
                 - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            CFSVirtualIps: !Join
+              - ','
+              - - !Select [0, !GetAtt CFSNode0Eni.SecondaryPrivateIpAddresses]
+                - !Select [0, !GetAtt CFSNode1Eni.SecondaryPrivateIpAddresses]
+                - !Select [0, !GetAtt CFSNode2Eni.SecondaryPrivateIpAddresses]
+                - !If [Use6Nodes, !Select [0, !GetAtt CFSNode3Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !Select [0, !GetAtt CFSNode4Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !Select [0, !GetAtt CFSNode5Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !Select [0, !GetAtt CFSNode6Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !Select [0, !GetAtt CFSNode7Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !Select [0, !GetAtt CFSNode8Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !Select [0, !GetAtt CFSNode9Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !Select [0, !GetAtt CFSNode10Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !Select [0, !GetAtt CFSNode11Eni.SecondaryPrivateIpAddresses], !Ref 'AWS::NoValue']
             CloudBDDiskNames: !Join
               - ','
               - - !GetAtt CFSNode0CloudBDDisk.Name
