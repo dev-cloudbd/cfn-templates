@@ -10,40 +10,40 @@ Parameters:
     ConstraintDescription: must be a valid subnet ID
 
 Mappings:
-  # Latest mappings updated Tue Dec 10, 2019
+  # Latest mappings updated Mon Feb 10, 2020
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-00a208c7cdba991ea
+      HVM64: ami-046842448f9e74e7d
     us-east-2:
-      HVM64: ami-059d836af932792c3
+      HVM64: ami-0367b500fdcac0edc
     us-west-1:
-      HVM64: ami-0f42d8c4eb586ccf7
+      HVM64: ami-0d58800f291760030
     us-west-2:
-      HVM64: ami-0a7d051a1c4b54f65
+      HVM64: ami-0edf3b95e26a682df
     ca-central-1:
-      HVM64: ami-0972a0d3135cf1fc0
+      HVM64: ami-064efdb82ae15e93f
     eu-central-1:
-      HVM64: ami-09356619876445425
+      HVM64: ami-0718a1ae90971ce4d
     eu-west-1:
-      HVM64: ami-04c58523038d79132
+      HVM64: ami-07042e91d04b1c30d
     eu-west-2:
-      HVM64: ami-00622b440d92e55c0
+      HVM64: ami-04cc79dd5df3bffca
     eu-west-3:
-      HVM64: ami-0b70d1460d5c7a299
+      HVM64: ami-0c367ebddcf279dc6
     eu-north-1:
-      HVM64: ami-005bc7d72deb72a3d
+      HVM64: ami-0e850e0e9c20d9deb
     ap-northeast-1:
-      HVM64: ami-0f6b4f4104d26f399
+      HVM64: ami-01f90b0460589991e
     ap-northeast-2:
-      HVM64: ami-02b4a5559ce53a570
+      HVM64: ami-096e3ded41e3bda6a
     ap-southeast-1:
-      HVM64: ami-07febfdfb4080320e
+      HVM64: ami-07ce5f60a39f1790e
     ap-southeast-2:
-      HVM64: ami-04a0f7552cff370ba
+      HVM64: ami-04c7af7de7ad468f0
     ap-south-1:
-      HVM64: ami-0245841fc4b40e22f
+      HVM64: ami-0d11056c10bfdde69
     sa-east-1:
-      HVM64: ami-049f5d88d2d436431
+      HVM64: ami-0cb1ddea3786f6c0d
 
 Resources:
   ##############################################################################
@@ -134,27 +134,19 @@ Resources:
               command: |
                 set -xe
                 add-apt-repository ppa:gluster/glusterfs-7
-                add-apt-repository ppa:nfs-ganesha/nfs-ganesha-3.0
-                # wrong shared lib in the ppa (version 3.2)
-                #add-apt-repository ppa:nfs-ganesha/libntirpc-3.0
-                # get from cache
-                wget https://launchpad.net/~nfs-ganesha/+archive/ubuntu/libntirpc-3.0/+build/18106993/+files/libntirpc3_3.0-ubuntu1~bionic2_amd64.deb -O /tmp/libntirpc3.deb
-                dpkg -i /tmp/libntirpc3.deb
                 apt update
 
-                systemctl mask gluster-ta-volume
+                systemctl mask gluster-ta-volume glusterfssharedstorage
                 apt install -y cbd-client \
                                glusterfs-server \
                                lvm2 \
                                thin-provisioning-tools \
                                bcache-tools \
+                               traceroute \
                                fio \
-                               iftop \
-                               ctdb \
-                               nfs-ganesha-gluster \
-                               samba
-                systemctl disable --now glusterd smbd nfs-ganesha
-                
+                               iftop
+                systemctl disable --now glusterd
+
                 apt-get install -y --download-only gdb pstack strace
                 wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb
                 dpkg -i /tmp/amazon-cloudwatch-agent.deb
@@ -296,108 +288,10 @@ Resources:
               mode: "000644"
               owner: "root"
               group: "root"
-            /etc/systemd/system/ctdb.service.d/override.conf:
-              content: |
-                [Unit]
-                Requires=glusterfssharedstorage.service
-                After=glusterfssharedstorage.service
-
-                [Install]
-                WantedBy=glusterfssharedstorage.service
-              mode: "000644"
-              owner: "root"
-              group: "root"
             /etc/systemd/timesyncd.conf.d/amazontime.conf:
               content: |
                 [Time]
                 NTP=169.254.169.123
-              mode: "000644"
-              owner: "root"
-              group: "root"
-            /etc/ctdb/ctdbd.conf:
-              content: |
-                # Options to ctdbd, read by ctdbd_wrapper(1)
-                #
-                # See ctdbd.conf(5) for more information about CTDB configuration variables.
-
-                # Shared recovery lock file to avoid split brain.  No default.
-                #
-                # Do NOT run CTDB without a recovery lock file unless you know exactly
-                # what you are doing.
-                CTDB_RECOVERY_LOCK=/run/gluster/shared_storage/ctdb-lockfile
-
-                # List of nodes in the cluster.  Default is below.
-                CTDB_NODES=/etc/ctdb/nodes
-
-                # List of public addresses for providing NAS services.  No default.
-                CTDB_PUBLIC_ADDRESSES=/etc/ctdb/public_addresses
-
-                # What services should CTDB manage?  Default is none.
-                # CTDB_MANAGES_SAMBA=yes
-                # CTDB_MANAGES_WINBIND=yes
-                # CTDB_MANAGES_NFS=yes
-
-                # Raise the file descriptor limit for CTDB?
-                # CTDB_MAX_OPEN_FILES=10000
-
-                # Default is to use the log file below instead of syslog.
-                # CTDB_LOGGING=file:/var/log/log.ctdb
-
-                # Default log level is NOTICE.  Want less logging?
-                # CTDB_DEBUGLEVEL=ERR
-
-                # Set some CTDB tunable variables during CTDB startup?
-                # CTDB_SET_TDBMutexEnabled=0
-              mode: "000644"
-              owner: "root"
-              group: "root"
-            /etc/ctdb/events.d/09-aws.template:
-              content: |
-                #!/bin/sh
-
-                #################################
-                # aws event script for ctdb
-                # this adds/removes IPs from the
-                # default eni
-
-                [ -n "$CTDB_BASE" ] || \
-                    CTDB_BASE=$(d=$(dirname "$0") ; cd -P "$d" ; dirname "$PWD")
-
-                . "${CTDB_BASE}/functions"
-
-                loadconfig
-
-                [ -z "$CTDB_PUBLIC_ADDRESSES" ] && {
-                        CTDB_PUBLIC_ADDRESSES="${CTDB_BASE}/public_addresses"
-                }
-
-                [ ! -f "$CTDB_PUBLIC_ADDRESSES" ] && {
-                        if [ "$1" = "init" ]; then
-                                echo "No public addresses file found. Nothing to do for 09.aws"
-                        fi
-                        exit 0
-                }
-
-                ctdb_check_args "$@"
-
-                case "$1" in
-                takeip)
-                        iface=$2
-                        ip=$3
-                        maskbits=$4
-
-                        aws ec2 assign-private-ip-addresses \
-                            --region @AWS_REGION@ \
-                            --endpoint-url @EC2_ENDPOINT_URL@ \
-                            --allow-reassignment \
-                            --network-interface-id @ENI_ID@ \
-                            --private-ip-addresses "$ip" || {
-                                exit 1;
-                        }
-                        ;;
-                esac
-
-                exit 0
               mode: "000644"
               owner: "root"
               group: "root"
@@ -413,7 +307,6 @@ Resources:
                 #!/bin/bash -x
                 # Required IAM permissions:
                 #   ec2:AttachNetworkInterfaces - attach the static IP ENI
-                #   ec2:AssignPrivateIpAddress (if CFS_ENABLE_NFS or CFS_ENABLE_SAMBA) - add NFS/Samba virtual floating IPs
                 #   ec2:DescribeVolumes (only if CFS_USE_CACHE=yes) - identify the cache volume UUID
                 #   CloudBDS3RemotePolicy
                 #
@@ -424,7 +317,6 @@ Resources:
                 #   CFS_ENI_INTERFACE="INTERFACE_NAME"
                 #   CFS_ENI_DEVICE_INDEX="N"
                 #   CFS_NODE_IPS="IP,IP,IP..."
-                #   CFS_VIRTUAL_IPS="IP,IP,IP..."
                 #   CLOUDBD_CREDENTIALS_REGION="AWS_REGION"
                 #   CLOUDBD_CREDENTIALS_PARAM_NAME="SSM_PARAM_NAME"
                 #   CLOUDBD_REMOTE_NAME="REMOTE_NAME"
@@ -481,7 +373,6 @@ Resources:
                 ##############################################################################
                 IFS="," read -ra CFS_ENI_IDS <<< "$CFS_ENI_IDS"
                 IFS="," read -ra CFS_NODE_IPS <<< "$CFS_NODE_IPS"
-                IFS="," read -ra CFS_VIRTUAL_IPS <<< "$CFS_VIRTUAL_IPS"
                 CFS_NUM_NODES="${#CFS_ENI_IDS[@]}"
 
                 if hostname | grep -qE "node[[:digit:]]+\.$CFS_CLUSTER_NAME.cfs.cloudbd.io"; then
@@ -575,10 +466,6 @@ Resources:
                           table: 1000
                 $(for IP in "${CFS_NODE_IPS[@]}"; do
                     echo "        - to: $IP"
-                    echo "          table: 1000"
-                  done)
-                $(for IP in "${CFS_VIRTUAL_IPS[@]}"; do
-                    echo "        - from: $IP"
                     echo "          table: 1000"
                   done)
                 EOF
@@ -1053,10 +940,10 @@ Resources:
                           performance.quick-read off \
                           server.outstanding-rpc-limit 256 \
                           server.event-threads 4 \
-                          client.event-threads 4 
+                          client.event-threads 4 \
+                          disperse.shd-max-threads 4
 
                       gluster volume start "$CFS_VOLUME_NAME"
-                      gluster volume set all cluster.enable-shared-storage enable
                     elif [ "$CURRENT_BRICKS" -lt "$CFS_NUM_NODES" ]; then
                       NEW_CFS_VOLUME_BRICKS=""
                       for ((ID=CURRENT_BRICKS; ID < CFS_NUM_NODES; ID++)); do
@@ -1070,37 +957,6 @@ Resources:
                     fi
                   done
                 fi
-
-                # CTDB High Availability
-                # NODE IPS
-                cat << EOF > /etc/ctdb/nodes
-                $(for IP in "${CFS_NODE_IPS[@]}"; do
-                    echo "$IP"
-                  done)
-                EOF
-
-                # VIRTUAL IP ADDRESSES
-                cat << EOF > /etc/ctdb/public_addresses
-                $(for IP in "${CFS_VIRTUAL_IPS[@]}"; do
-                    echo "$IP"
-                  done)
-                EOF
-
-                # AWS CTDB HOOK
-                if [ -f /etc/ctdb/events.d/09-aws.template ]; then
-                  sed -i "s|@EC2_ENDPOINT_URL@|https://$CFS_EC2_ENDPOINT_URL|" /etc/ctdb/events.d/09-aws.template
-                  sed -i "s|@AWS_REGION@|$AWS_REGION|" /etc/ctdb/events.d/09-aws.template
-                  sed -i "s|@ENI_ID@|${CFS_ENI_IDS[CFS_NODE_ID]}|" /etc/ctdb/events.d/09-aws.template
-                  mv /etc/ctdb/events.d/09-aws.template /etc/ctdb/events.d/09-aws
-                  chmod a+x /etc/ctdb/events.d/09-aws
-                  systemctl enable ctdb
-                fi
-
-                if ! grep -q gluster_shared_storage /etc/fstab; then
-                  echo "node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io:/gluster_shared_storage /var/run/gluster/shared_storage/ glusterfs defaults 0 0" >> /etc/fstab
-                  systemctl daemon-reload
-                fi
-                systemctl enable --now glusterfssharedstorage
 
                 # Metrics and Logs
                 if [ "$CFS_CLOUDWATCH_SUPPORT" = "yes" ]; then
@@ -1179,6 +1035,52 @@ Resources:
                 EOF
 
                   amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+                fi
+
+                # For active cluster wait to signal completion until gluster recovery has finished
+                if gluster volume info "$CFS_VOLUME_NAME" | grep -q 'Status: Started'; then
+
+                  # Wait for self heal daemon to start
+                  attempts=60
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    gluster volume heal "$CFS_VOLUME_NAME"
+
+                    if [ "$?" -ne 0 ]; then
+                      let attempts--
+                      sleep 5
+                      false
+                    fi
+                  done
+
+                  attempts=60
+                  false
+                  while [ "$?" -gt 0 ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      exit 1
+                    fi
+
+                    # Debug info
+                    find "$CFS_MOUNT_DIR/brick/.glusterfs/indices/" -type f
+                    gluster volume heal "$CFS_VOLUME_NAME" info
+
+                    heal_output="$(gluster volume heal "$CFS_VOLUME_NAME" info summary)"
+                    echo "$heal_output" | grep 'Status: ' | grep -v 'Connected'
+                    heal_status="$?"
+                    echo "$heal_output" | grep 'Total Number of entries: [^0]'
+                    heal_entries="$?"
+
+                    if [ "$heal_status" -eq 0 ] || [ "$heal_entries" -eq 0 ]; then
+                      let attempts--
+                      gluster volume heal "$CFS_VOLUME_NAME"
+                      sleep 15
+                      false
+                    fi
+                  done
                 fi
 
                 exit 0
