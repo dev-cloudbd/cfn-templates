@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudBD File System (CFS) - Version 0.9 (Beta)'
+Description: 'CloudBD File System (CFS) - Version 1.0'
 
 Parameters:
   ###########################################################################
@@ -76,7 +76,7 @@ Parameters:
     Description: Use server-side encryption with SSE-S3 (AES256).
     Type: String
     AllowedValues: [ 'yes', 'no' ]
-    Default: 'no'
+    Default: 'yes'
 
   CloudBDHttpProtocol:
     Description: Select the HTTP protocol to use when communicating with the
@@ -107,10 +107,17 @@ Parameters:
     Default: 'yes'
     ConstraintDescription: must be 'yes' or 'no'
 
+  Power:
+    Description: Turn the cluster nodes on or off
+    Type: String
+    AllowedValues: ['on', 'off']
+    Default: 'on'
+    ConstraintDescription: must be 'yes' or 'no'
+
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-08745f25633bc07b7
+      HVM64: ami-0b42d4d81efdc96a0
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
@@ -118,11 +125,17 @@ Conditions:
   CloudBDUseCustomKey: !Not [!Equals [!Ref CloudBDCredentialsCustomKeyId, '']]
   UsePlacementGroup: !Not [!Equals ['none', !Ref PlacementStrategy]]
   SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]
+  SsmSessionEnabledP: !And [!Condition PoweredOn, !Condition SsmSessionEnabled]
   CloudWatchEnabled: !Equals ['yes', !Ref CloudWatchSupport]
+  CloudWatchEnabledP: !And [!Condition PoweredOn, !Condition CloudWatchEnabled]
   Use6Nodes: !Not [!Equals [!Ref NumNodes, '3']]
+  Use6NodesP: !And [!Condition Use6Nodes, !Condition PoweredOn]
   Use9Nodes: !And [!Condition Use6Nodes, !Not [!Equals [!Ref NumNodes, '6']]]
+  Use9NodesP: !And [!Condition Use9Nodes, !Condition PoweredOn]
   Use12Nodes: !And [!Condition Use9Nodes, !Not [!Equals [!Ref NumNodes, '9']]]
+  Use12NodesP: !And [!Condition Use12Nodes, !Condition PoweredOn]
   UseCache: !Equals ['0', '1'] # always false, bcache can have stability issues in detached cache state, future feature
+  PoweredOn: !Equals ['on', !Ref Power]
 
 Resources:
   ##############################################################################
@@ -432,6 +445,7 @@ Resources:
 
   CFSEc2Endpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
       VpcEndpointType: Interface
@@ -442,6 +456,7 @@ Resources:
 
   CFSCloudFormationEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
       VpcEndpointType: Interface
@@ -452,6 +467,7 @@ Resources:
 
   CFSApiEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.execute-api'
       VpcEndpointType: Interface
@@ -462,6 +478,7 @@ Resources:
       
   CFSSsmEndpoint:
     Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
       VpcEndpointType: Interface
@@ -472,7 +489,7 @@ Resources:
 
   CFSSsmMessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
-    Condition: SsmSessionEnabled
+    Condition: SsmSessionEnabledP
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
       VpcEndpointType: Interface
@@ -483,7 +500,7 @@ Resources:
 
   CFSLoggingEndpoint:
     Type: AWS::EC2::VPCEndpoint
-    Condition: CloudWatchEnabled
+    Condition: CloudWatchEnabledP
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
       VpcEndpointType: Interface
@@ -494,9 +511,42 @@ Resources:
 
   CFSMonitoringEndpoint:
     Type: AWS::EC2::VPCEndpoint
-    Condition: CloudWatchEnabled
+    Condition: CloudWatchEnabledP
     Properties:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.monitoring'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [ !Ref CFSEndpointSecurityGroup ]
+
+  CFSEc2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSAutoScalingEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.autoscaling'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSEventsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.events'
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
@@ -505,13 +555,45 @@ Resources:
 
   ##############################################################################
   # Networking - Route53 DNS
+  CFSMasterNodeReverseLookupHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: !Sub 'CFS reverse lookup for ${ClusterName}.cfs.cloudbd.io'
+      Name: !Sub
+        - '${S3}.${S2}.${S1}.${S0}.in-addr.arpa.'
+        - S0: !Select [0, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S1: !Select [1, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S2: !Select [2, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S3: !Select [3, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+      VPCs:
+        - VPCId: !Ref Vpc
+          VPCRegion: !Ref 'AWS::Region'
+
+  CFSMasterNodeReverseLookupRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Comment: 'Node0 ENI reverse lookup'
+      HostedZoneId: !Ref CFSMasterNodeReverseLookupHostedZone
+      Name: !Sub
+        - '${S3}.${S2}.${S1}.${S0}.in-addr.arpa.'
+        - S0: !Select [0, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S1: !Select [1, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S2: !Select [2, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S3: !Select [3, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+      ResourceRecords: [!Sub 'node0.${ClusterName}.cfs.cloudbd.io']
+      Type: PTR
+      TTL: 60
+
   CFSHostedZone:
     Type: AWS::Route53::HostedZone
     Properties:
       HostedZoneConfig:
-        Comment: !Sub 'Hosted zone for ${ClusterName}.cfs.cloudbd.io'
+        Comment: !Sub 'CFS forward lookup for ${ClusterName}.cfs.cloudbd.io'
       Name: !Sub '${ClusterName}.cfs.cloudbd.io'
-      VPCs: [{VPCId: !Ref Vpc, VPCRegion: !Ref 'AWS::Region'}]
+      VPCs:
+        - VPCId: !Ref Vpc
+          VPCRegion: !Ref 'AWS::Region'
 
   CFSRecordSetGroup:
     Type: AWS::Route53::RecordSetGroup
@@ -535,81 +617,6 @@ Resources:
             - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
           Type: A
           TTL: 60
-        - Name: !Sub 'node0.${ClusterName}.cfs.cloudbd.io'
-          ResourceRecords: [!GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]
-          Type: A
-          TTL: 60
-        - Name: !Sub 'node1.${ClusterName}.cfs.cloudbd.io'
-          ResourceRecords: [!GetAtt CFSNode1Eni.PrimaryPrivateIpAddress]
-          Type: A
-          TTL: 60
-        - Name: !Sub 'node2.${ClusterName}.cfs.cloudbd.io'
-          ResourceRecords: [!GetAtt CFSNode2Eni.PrimaryPrivateIpAddress]
-          Type: A
-          TTL: 60
-        - !If
-            - Use6Nodes
-            - Name: !Sub 'node3.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode3Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use6Nodes
-            - Name: !Sub 'node4.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode4Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use6Nodes
-            - Name: !Sub 'node5.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode5Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use9Nodes
-            - Name: !Sub 'node6.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode6Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use9Nodes
-            - Name: !Sub 'node7.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode7Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use9Nodes
-            - Name: !Sub 'node8.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode8Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use12Nodes
-            - Name: !Sub 'node9.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode9Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use12Nodes
-            - Name: !Sub 'node10.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode10Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
-        - !If
-            - Use12Nodes
-            - Name: !Sub 'node11.${ClusterName}.cfs.cloudbd.io'
-              ResourceRecords: [!GetAtt CFSNode11Eni.PrimaryPrivateIpAddress]
-              Type: A
-              TTL: 60
-            - !Ref 'AWS::NoValue'
 
   ##############################################################################
   # CloudBD S3 Remote - For high-performance storage of CFS data to S3
@@ -673,6 +680,17 @@ Resources:
             Principal: { Service: 'lambda.amazonaws.com' }
             Action: 'sts:AssumeRole'
       ManagedPolicyArns: [ !Ref CloudBDS3RemotePolicy ]
+      Policies:
+        - PolicyName: "logs"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
 
   CloudBDDiskLambda:
     Type: AWS::Lambda::Function
@@ -780,13 +798,6 @@ Resources:
       Name: !Sub 'cfs_${ClusterName}_disk11'
       Size: '134217856M' # 128T + 128M
 
-  CFSNode12CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk12'
-      Size: '134217856M' # 128T + 128M
-
   CFSNodeRole:
     Type: AWS::IAM::Role
     Properties:
@@ -814,18 +825,33 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - 'ec2:AttachNetworkInterface'
+                  - 'autoscaling:DescribeAutoScalingGroups' # Power status in terminate scripts using ASG desired count
+                  - 'ec2:AttachNetworkInterface'            # Attach static IP ENI to nodes
+                  - 'ec2:DescribeInstances'                 # Prevent duplicate node startup on separate subnets that can cause data corruption
+                  - 'ec2:DescribeNetworkInterfaceAttribute' # Node identification
+                  - 'ec2:DescribeTags'                      # Identify ASG name, CFN Stack name, CFS node group
+                  - 'events:PutEvents'                      # Trigger startup route 53 dns update in lifecycle lambda
+                  - !If [UseCache, 'ec2:DescribeInstanceAttribute', !Ref 'AWS::NoValue'] # Identify cache volume
                 Resource: '*'
               - Effect: Allow
-                Action: 'ec2:DescribeTags' # Used to identify autoscaling node group number
+                Action:
+                  - 'ec2:CreateTags'                        # Set the CFSNodeID tag on startup / protect against duplicate node startup
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CFSClusterName: !Ref ClusterName
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:CompleteLifecycleAction'   # Complete lifecycle startup and terminate hooks
+                  - 'autoscaling:RecordLifecycleActionHeartbeat' # Send heartbeat for lifecycle startup and terminate hooks
                 Resource: '*'
-              - !If
-                - UseCache
-                - Effect: Allow
-                  Action:
-                    - 'ec2:DescribeVolumes'
-                  Resource: '*'
-                - !Ref 'AWS::NoValue'
+                Condition:
+                  StringEquals:
+                    autoscaling:ResourceTag/CFSClusterName: !Ref ClusterName
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:DescribeStackResource'  # Detect stack termination status in instance terminate scripts
+                Resource: !Ref 'AWS::StackId'
 
   CFSNodeInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -840,6 +866,19 @@ Resources:
 
   CFSLaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: # Missing dependencies to force graceful terminate
+      - CFSS3VpcEndpoint
+      - CFSNodeGlusterFSBrickSecurityGroupIngress
+      - CFSNodeGlusterFSSecurityGroupIngress
+      - CFSNodeSshSecurityGroupIngress
+      - CFSNodePingSecurityGroupIngress
+      - CFSPrivateSubnetRouteTableAssociation
+      - CFSRecordSetGroup
+      - CFSMasterNodeReverseLookupRecordSet
+      - CFSAutoScalingGroupStartupLifecycleHookEventRulePermission
+      - CFSAutoScalingGroupTerminateLifecycleHookEventRulePermission
+      - CFSAutoScalingGroupTerminateLifecycleHookFailureEventRulePermission
+    Condition: PoweredOn
     Properties:
       ImageId: !FindInMap [CFSNodeAmis, !Ref 'AWS::Region', HVM64]
       SecurityGroups: [!Ref CFSNodeSecurityGroup]
@@ -851,51 +890,67 @@ Resources:
       UserData:
         Fn::Base64: !Sub
           - |
-            #!/bin/bash -x
+            #!/bin/bash
             CFS_INSTANCE_ID="$(curl -s http://169.254.169.254:/latest/meta-data/instance-id)"
+            CFS_ASG_NAME="$(aws ec2 describe-tags \
+                --filters Name=key,Values=aws:autoscaling:groupName \
+                          Name=resource-id,Values="$CFS_INSTANCE_ID" \
+                --region ${AWS::Region} \
+                --endpoint-url "https://${CFSEc2EndpointDns}" \
+                --query 'Tags[0].Value' \
+                --output text)"
+            AWS_CFN_NAME="$(aws ec2 describe-tags \
+                --filters Name=key,Values=aws:cloudformation:logical-id \
+                          Name=resource-id,Values="$CFS_INSTANCE_ID" \
+                --region ${AWS::Region} \
+                --endpoint-url "https://${CFSEc2EndpointDns}" \
+                --query 'Tags[0].Value' \
+                --output text)"
             CFS_NODE_GROUP="$(aws ec2 describe-tags \
                 --filters Name=key,Values=CFSNodeGroup \
                           Name=resource-id,Values="$CFS_INSTANCE_ID" \
                 --region ${AWS::Region} \
-                --endpoint-url "https://${CFSEc2EndpointUrl}" \
+                --endpoint-url "https://${CFSEc2EndpointDns}" \
                 --query Tags[0].Value \
                 --output text)"
-            cat << EOF > /root/configure.env
-            export AWS_REGION="${AWS::Region}"
-            export CFS_NODE_GROUP="$CFS_NODE_GROUP"
-            export CFS_ENI_IDS='${CFSNodeEnis}'
-            export CFS_ENI_INTERFACE="ens6"
-            export CFS_ENI_DEVICE_INDEX="1"
-            export CFS_NODE_IPS='${CFSNodeIps}'
-            export CLOUDBD_CREDENTIALS_REGION="${AWS::Region}"
-            export CLOUDBD_CREDENTIALS_PARAM_NAME="${CloudBDCredentialsParamName}"
-            export CLOUDBD_REMOTE_NAME="remote"
-            export CLOUDBD_REMOTE_BUCKET="${CloudBDS3RemoteBucket}"
-            export CLOUDBD_REMOTE_HTTP_PROTOCOL="${CloudBDHttpProtocol}"
-            export CLOUDBD_DISK_NAMES='${CloudBDDiskNames}'
-            export CFS_CLUSTER_NAME="${ClusterName}"
-            export CFS_VOLUME_NAMES="${VolumeName}"
-            export CFS_SNAPSHOT_SUPPORT="yes"
-            export CFS_USE_CACHE="no"
-            export CFS_EC2_ENDPOINT_URL="${CFSEc2EndpointUrl}"
-            export CFS_CLOUDFORMATION_ENDPOINT_URL="${CFSCloudFormationEndpointUrl}"
-            export CFS_API_ENDPOINT_URL="${CFSApiEndpointUrl}"
-            export CFS_SSM_ENDPOINT_URL="${CFSSsmEndpointUrl}"
-            export CFS_SSMMESSAGES_ENDPOINT_URL="${CFSSsmMessagesEndpointUrl}"
-            export CFS_MONITORING_ENDPOINT_URL="${CFSMonitoringEndpointUrl}"
-            export CFS_LOGGING_ENDPOINT_URL="${CFSLoggingEndpointUrl}"
-            export CFS_CLOUDWATCH_SUPPORT="${CloudWatchSupport}"
+
+            cat << EOF > /opt/cfs/cfs.conf
+            AWS_REGION="${AWS::Region}"
+            AWS_STACK_NAME="${AWS::StackName}"
+            AWS_CFN_NAME="$AWS_CFN_NAME"
+            CFS_INSTANCE_ID="$CFS_INSTANCE_ID"
+            CFS_NODE_GROUP="$CFS_NODE_GROUP"
+            CFS_NODE_IPS='${CFSNodeIps}'
+            CFS_ASG_NAME="$CFS_ASG_NAME"
+            CFS_ASG_RESOURCE="CFSAutoScalingGroup$CFS_NODE_GROUP"
+            CFS_ENI_IDS='${CFSNodeEnis}'
+            CFS_ENI_INTERFACE="ens6"
+            CFS_ENI_DEVICE_INDEX="1"
+            CLOUDBD_CREDENTIALS_REGION="${AWS::Region}"
+            CLOUDBD_CREDENTIALS_PARAM_NAME="${CloudBDCredentialsParamName}"
+            CLOUDBD_REMOTE_NAME="remote"
+            CLOUDBD_REMOTE_BUCKET="${CloudBDS3RemoteBucket}"
+            CLOUDBD_REMOTE_HTTP_PROTOCOL="${CloudBDHttpProtocol}"
+            CLOUDBD_DISK_NAMES='${CloudBDDiskNames}'
+            CFS_CLUSTER_NAME="${ClusterName}"
+            CFS_VOLUME_NAMES="${VolumeName}"
+            CFS_SNAPSHOT_SUPPORT="yes"
+            CFS_USE_CACHE="no"
+            CFS_EC2_ENDPOINT_DNS="${CFSEc2EndpointDns}"
+            CFS_CLOUDFORMATION_ENDPOINT_DNS="${CFSCloudFormationEndpointDns}"
+            CFS_AUTOSCALING_ENDPOINT_DNS="${CFSAutoScalingEndpointDns}"
+            CFS_API_ENDPOINT_DNS="${CFSApiEndpointDns}"
+            CFS_SSM_ENDPOINT_DNS="${CFSSsmEndpointDns}"
+            CFS_SSMMESSAGES_ENDPOINT_DNS="${CFSSsmMessagesEndpointDns}"
+            CFS_MONITORING_ENDPOINT_DNS="${CFSMonitoringEndpointDns}"
+            CFS_LOGGING_ENDPOINT_DNS="${CFSLoggingEndpointDns}"
+            CFS_CLOUDWATCH_SUPPORT="${CloudWatchSupport}"
+            CFS_EC2MESSAGES_ENDPOINT_DNS="${CFSEc2MessagesEndpointDns}"
+            CFS_EVENTS_ENDPOINT_DNS="${CFSEventsEndpointDns}"
             EOF
 
-            source /root/configure.env
-            /root/configure.sh
-
-            /usr/local/bin/cfn-signal \
-                -e "$?" \
-                --region ${AWS::Region} \
-                --stack ${AWS::StackName} \
-                --resource CFSAutoScalingGroup$CFS_NODE_GROUP \
-                --url "https://$CFS_CLOUDFORMATION_ENDPOINT_URL"
+            /opt/cfs/scripts/startup
+            exit $?
           - CFSNodeEnis: !Join
               - ','
               - - !Ref CFSNode0Eni
@@ -938,160 +993,368 @@ Resources:
                 - !If [Use12Nodes, !GetAtt CFSNode9CloudBDDisk.Name, !Ref 'AWS::NoValue']
                 - !If [Use12Nodes, !GetAtt CFSNode10CloudBDDisk.Name, !Ref 'AWS::NoValue']
                 - !If [Use12Nodes, !GetAtt CFSNode11CloudBDDisk.Name, !Ref 'AWS::NoValue']
-            CFSEc2EndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2Endpoint.DnsEntries]]]
-            CFSCloudFormationEndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSCloudFormationEndpoint.DnsEntries]]]
-            CFSApiEndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSApiEndpoint.DnsEntries]]]
-            CFSSsmEndpointUrl: !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmEndpoint.DnsEntries]]]
-            CFSSsmMessagesEndpointUrl: !If
-              - SsmSessionEnabled
+            CFSEc2EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2Endpoint.DnsEntries]]]
+            CFSCloudFormationEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSCloudFormationEndpoint.DnsEntries]]]
+            CFSApiEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSApiEndpoint.DnsEntries]]]
+            CFSSsmEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmEndpoint.DnsEntries]]]
+            CFSEc2MessagesEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2MessagesEndpoint.DnsEntries]]]
+            CFSAutoScalingEndpointDns: !Select [ '1', !Split [ ':', !Select [ '0', !GetAtt CFSAutoScalingEndpoint.DnsEntries ] ] ]
+            CFSSsmMessagesEndpointDns: !If
+              - SsmSessionEnabledP
               - !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmMessagesEndpoint.DnsEntries]]]
               - !Sub 'ssmmessages.${AWS::Region}.amazonaws.com'
-            CFSMonitoringEndpointUrl: !If
-              - CloudWatchEnabled
+            CFSMonitoringEndpointDns: !If
+              - CloudWatchEnabledP
               - !Select [1, !Split [':', !Select [0, !GetAtt CFSMonitoringEndpoint.DnsEntries]]]
               - !Sub 'monitoring.${AWS::Region}.amazonaws.com'
-            CFSLoggingEndpointUrl: !If
-              - CloudWatchEnabled
+            CFSLoggingEndpointDns: !If
+              - CloudWatchEnabledP
               - !Select [1, !Split [':', !Select [0, !GetAtt CFSLoggingEndpoint.DnsEntries]]]
               - !Sub 'logs.${AWS::Region}.amazonaws.com'
+            CFSEventsEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEventsEndpoint.DnsEntries]]]
 
   CFSAutoScalingGroup0:
     Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: PoweredOn
     Properties:
       AvailabilityZones: [!Ref AvailabilityZone]
-      MinSize: '2'
+      MinSize: !If [PoweredOn, '3', '0']
       MaxSize: '3'
-      DesiredCapacity: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
       LaunchConfigurationName: !Ref CFSLaunchConfiguration
       PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
       VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
       Tags:
         - Key: 'Name'
           PropagateAtLaunch: true
-          Value: !Sub 'CFS Node Group 0 (${ClusterName})'
-        - Key: 'CFSNodeGroup'
-          PropagateAtLaunch: true
-          Value: '0'
+          Value: 'CFS Node'
         - Key: 'CFSClusterName'
           PropagateAtLaunch: true
           Value: !Ref ClusterName
-        - Key: 'CFSDependsOn'   # Force master node updates after all other groups
+        - Key: 'CFSNodeGroup'
+          PropagateAtLaunch: true
+          Value: '0'
+        - Key: 'CFSNodeId'
+          PropagateAtLaunch: true
+          Value: 'None'
+        - Key: 'CFSDependsOn'   # Force master node updates after all other groups for clean expansion
           PropagateAtLaunch: false
           Value: !Join
             - ','
             - - !If [Use6Nodes, !Ref CFSAutoScalingGroup1, !Ref 'AWS::NoValue']
               - !If [Use9Nodes, !Ref CFSAutoScalingGroup2, !Ref 'AWS::NoValue']
               - !If [Use12Nodes, !Ref CFSAutoScalingGroup3, !Ref 'AWS::NoValue']
-    CreationPolicy:
-      ResourceSignal:
-        Count: '3'
-        Timeout: PT15M
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MaxBatchSize: 1
-        MinInstancesInService: 2
+        MinInstancesInService: !If [PoweredOn, '2', '0']
         MinSuccessfulInstancesPercent: 100
-        WaitOnResourceSignals: true
-        PauseTime: PT30M
 
   CFSAutoScalingGroup1:
     Type: AWS::AutoScaling::AutoScalingGroup
-    Condition: Use6Nodes
+    Condition: Use6NodesP
     Properties:
       AvailabilityZones: [!Ref AvailabilityZone]
-      MinSize: '2'
+      MinSize: !If [PoweredOn, '3', '0']
       MaxSize: '3'
-      DesiredCapacity: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
       LaunchConfigurationName: !Ref CFSLaunchConfiguration
       PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
       VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
       Tags:
         - Key: 'Name'
           PropagateAtLaunch: true
-          Value: !Sub 'CFS Node Group 1 (${ClusterName})'
+          Value: 'CFS Node'
+        - Key: 'CFSClusterName'
+          PropagateAtLaunch: true
+          Value: !Ref ClusterName
         - Key: 'CFSNodeGroup'
           PropagateAtLaunch: true
           Value: '1'
-        - Key: 'CFSClusterName'
+        - Key: 'CFSNodeId'
           PropagateAtLaunch: true
-          Value: !Ref ClusterName
-    CreationPolicy:
-      ResourceSignal:
-        Count: '3'
-        Timeout: PT15M
+          Value: 'None'
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MaxBatchSize: 1
-        MinInstancesInService: 2
+        MinInstancesInService: !If [PoweredOn, '2', '0']
         MinSuccessfulInstancesPercent: 100
-        WaitOnResourceSignals: true
-        PauseTime: PT15M
 
   CFSAutoScalingGroup2:
     Type: AWS::AutoScaling::AutoScalingGroup
-    Condition: Use9Nodes
+    Condition: Use9NodesP
     Properties:
       AvailabilityZones: [!Ref AvailabilityZone]
-      MinSize: '2'
+      MinSize: !If [PoweredOn, '3', '0']
       MaxSize: '3'
-      DesiredCapacity: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
       LaunchConfigurationName: !Ref CFSLaunchConfiguration
       PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
       VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
       Tags:
         - Key: 'Name'
           PropagateAtLaunch: true
-          Value: !Sub 'CFS Node Group 2 (${ClusterName})'
+          Value: 'CFS Node'
+        - Key: 'CFSClusterName'
+          PropagateAtLaunch: true
+          Value: !Ref ClusterName
         - Key: 'CFSNodeGroup'
           PropagateAtLaunch: true
           Value: '2'
-        - Key: 'CFSClusterName'
+        - Key: 'CFSNodeId'
           PropagateAtLaunch: true
-          Value: !Ref ClusterName
-    CreationPolicy:
-      ResourceSignal:
-        Count: '3'
-        Timeout: PT15M
+          Value: 'None'
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MaxBatchSize: 1
-        MinInstancesInService: 2
+        MinInstancesInService: !If [PoweredOn, '2', '0']
         MinSuccessfulInstancesPercent: 100
-        WaitOnResourceSignals: true
-        PauseTime: PT15M
 
   CFSAutoScalingGroup3:
     Type: AWS::AutoScaling::AutoScalingGroup
-    Condition: Use12Nodes
+    Condition: Use12NodesP
     Properties:
       AvailabilityZones: [!Ref AvailabilityZone]
-      MinSize: '2'
+      MinSize: !If [PoweredOn, '3', '0']
       MaxSize: '3'
-      DesiredCapacity: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
       LaunchConfigurationName: !Ref CFSLaunchConfiguration
       PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
       VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
       Tags:
         - Key: 'Name'
           PropagateAtLaunch: true
-          Value: !Sub 'CFS Node Group 3 (${ClusterName})'
-        - Key: 'CFSNodeGroup'
-          PropagateAtLaunch: true
-          Value: '3'
+          Value: 'CFS Node'
         - Key: 'CFSClusterName'
           PropagateAtLaunch: true
           Value: !Ref ClusterName
-    CreationPolicy:
-      ResourceSignal:
-        Count: '3'
-        Timeout: PT15M
+        - Key: 'CFSNodeGroup'
+          PropagateAtLaunch: true
+          Value: '3'
+        - Key: 'CFSNodeId'
+          PropagateAtLaunch: true
+          Value: 'None'
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MaxBatchSize: 1
-        MinInstancesInService: 2
+        MinInstancesInService: !If [PoweredOn, '2', '0']
         MinSuccessfulInstancesPercent: 100
-        WaitOnResourceSignals: true
-        PauseTime: PT15M
+
+  CFSStartStopVolumes:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Start or stop export of Gluster volume(s)
+        parameters:
+          action:
+            type: String
+            allowedValues: ['start', 'stop']
+          volume:
+            type: String
+            description: ('Optional') Comma separated list of which volume(s) to start/stop or the keyword 'ALL_VOLUMES'
+            allowedPattern: '[a-zA-Z0-9_,]{1,24}'
+            default: 'ALL_VOLUMES'
+        mainSteps:
+          - action: aws:runShellScript
+            name: executeStartStopCmd
+            inputs:
+              timeoutSeconds: 600  # 10 minutes
+              runCommand:
+                - |
+                  # Gluster management daemon restart required due to bug in glusterd dns refresh
+                  systemctl restart glusterd
+                  sleep 5
+
+                  /opt/cfs/scripts/start-stop-volume {{action}} {{volume}}
+                  exit $?
+
+  CFSAutoScalingGroupLifecycleHookSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Run an auto scaling group lifecycle hook
+        parameters:
+          force:
+            type: String
+            description: '(Optional) lifecycle scripts invoked with the force flag set'
+            default: 'no'
+            allowedValues: ['yes', 'no']
+        mainSteps:
+          - action: aws:runShellScript
+            name: executeAsgLifecycleHook
+            inputs:
+              timeoutSeconds: 86400  # 1 day
+              runCommand:
+                - |
+                  export FORCE="{{force}}"
+                  /opt/cfs/scripts/terminate
+                  exit $?
+
+  CFSAutoScalingGroupLifecycleHookLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMFullAccess'
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:CompleteLifecycleAction'
+                  - 'ec2:DescribeTags'
+                Resource: '*'
+              - Effect: Allow
+                Action: 'route53:ChangeResourceRecordSets'
+                Resource: !Sub 'arn:aws:route53:::hostedzone/${CFSHostedZone}'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  CFSAutoScalingGroupLifecycleHookLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'asg-lifecycle-hook.handler'
+      Role: !GetAtt CFSAutoScalingGroupLifecycleHookLambdaRole.Arn
+      Runtime: 'python3.7'
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/asg-lifecycle-hook-0.0.0-21.zip'
+      Environment:
+        Variables:
+          LIFECYCLE_HOOK_DOCUMENT_NAME: !Ref CFSAutoScalingGroupLifecycleHookSSMDocument
+          LIFECYCLE_HOOK_NAME: !Sub 'CFS-${ClusterName}-SafeTerminte'
+          ROUTE53_HOSTED_ZONE: !Ref CFSHostedZone
+      Timeout: 120
+      MemorySize: 512
+
+  CFSAutoScalingGroupStartupLifecycleHookEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Execute ASG startup lifecycle hook lambda'
+      EventPattern:
+        source:
+          - 'cfs.autoscaling'
+        detail-type:
+          - 'CFS Node Update DNS Action'
+        detail:
+          ClusterName:
+            - !Ref ClusterName
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CFSAutoScalingGroupLifecycleHookLambda.Arn
+          Id: CFSAutoScalingLifecycleHook
+
+  CFSAutoScalingGroupTerminateLifecycleHookEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Execute ASG terminate lifecycle hook lambda'
+      EventPattern:
+        source:
+          - 'aws.autoscaling'
+        detail-type:
+          - 'EC2 Instance-terminate Lifecycle Action'
+        detail:
+          LifecycleHookName:
+            - !Sub 'CFS-${ClusterName}-SafeTerminate'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CFSAutoScalingGroupLifecycleHookLambda.Arn
+          Id: CFSAutoScalingLifecycleHook
+
+  CFSAutoScalingGroupTerminateLifecycleHookFailureEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Execute ASG terminate lifecycle hook lambda with force=true'
+      EventPattern:
+        source:
+          - 'aws.ssm'
+        detail-type:
+          - 'EC2 Command Invocation Status-change Notification'
+        detail:
+          document-name:
+            - !Ref CFSAutoScalingGroupLifecycleHookSSMDocument
+          status:
+            - 'TimedOut'
+            - 'Failed'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CFSAutoScalingGroupLifecycleHookLambda.Arn
+          Id: CFSAutoScalingLifecycleHook
+
+  CFSAutoScalingGroupStartupLifecycleHookEventRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CFSAutoScalingGroupLifecycleHookLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CFSAutoScalingGroupStartupLifecycleHookEventRule.Arn      
+
+  CFSAutoScalingGroupTerminateLifecycleHookEventRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CFSAutoScalingGroupLifecycleHookLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CFSAutoScalingGroupTerminateLifecycleHookEventRule.Arn      
+
+  CFSAutoScalingGroupTerminateLifecycleHookFailureEventRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CFSAutoScalingGroupLifecycleHookLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CFSAutoScalingGroupTerminateLifecycleHookFailureEventRule.Arn
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -1123,6 +1386,7 @@ Metadata:
       - Label:
           default: 'Admin Settings'
         Parameters:
+          - Power
           - KeyPair
           - SsmSessionSupport
           - CloudWatchSupport

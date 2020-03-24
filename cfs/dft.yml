@@ -285,12 +285,9 @@ Resources:
 
               [write]
               rw=write
-              ioengine=libaio
-              iodepth=8
               numjobs=8
               size=1G
               blocksize=1M
-              direct=1
               end_fsync=1
               EOF
 
@@ -303,12 +300,9 @@ Resources:
 
               [read]
               rw=read
-              ioengine=libaio
-              iodepth=16
               numjobs=8
               size=1G
               blocksize=1M
-              direct=1
               EOF
 
               cat << EOF > /etc/fio/rw.fio
