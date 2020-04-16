@@ -1,10 +1,41 @@
 # CloudBD CloudFormation Templates
 
-CloudBD allows you to use your AWS S3 object storage as block storage (i.e., disks or volumes) for your Linux EC2 instances. CloudBD disks are up to 5x faster (2.5 GB/s), 1000x more durable, and 90% lower cost (thinly allocated/usage-based) than native AWS EBS volumes.
+CloudBD enables you to use your AWS S3 object storage directly as block storage (CloudBD disks) or as POSIX-compliant shared network file storage (CFS). CloudBD disks and CFS are high throughput (2GB/s+), thinly allocated, extremely durable, and fully consistent.
 
-The easiest way to try out CloudBD disks on AWS is by using CloudFormation and the [CloudBD All-In-One template](https://github.com/dev-cloudbd/cfn-templates/blob/master/cloudbd-aio.yml). This template creates an isolated VPC environment and an EC2 instance (Ubuntu 18.04LTS/Bionic) with a CloudBD disk attached for testing. Once created, ssh to the instance and try out the CloudBD disk. When finished, simply delete the CloudFormation stack to clean up all CloudBD resources.
+## CloudBD Disks
+
+CloudBD disks are virtual Linux block devices that store all disk data in S3 objects. Designed for low cost/high throughput use cases, CloudBD disks can be a more cost efficient and significantly faster alternative to Amazon EBS st1 volumes. CloudBD disks can be created using the CloudBD CLI or by using an AWS Lambda backed custom resource for CloudFormation.
+
+### **Supported Operating Systems**
+
+* Ubuntu 16.04/Xenial, 18.04/Bionic
+* Amazon Linux AMI (2018.03)
+* Amazon Linux 2
+
+### **Limitations**
+
+* Min Disk Size: 8 GiB
+* Max Disk Size: 128 TiB
+* Filesystem Type: Ext4
+
+  ```bash
+  # Some suggested mkfs parameters
+  mkfs.ext4 -b 4096 -T largefile \
+      -E stride=512,stripe_width=512,lazy_itable_init=0,lazy_journal_init=0,packed_meta_blocks=1 \
+      /dev/mapper/<REMOTE>:<DISK>
+  ```
+
+The easiest way to try out CloudBD disks on AWS is by using CloudFormation and the [CloudBD All-In-One template](https://github.com/dev-cloudbd/cfn-templates/blob/master/cloudbd-aio.yml). This template creates an isolated VPC containing an EC2 instance (Ubuntu 18.04LTS/Bionic) with a CloudBD disk attached for testing. Once created, ssh to the instance and try out the CloudBD disk. When finished, simply delete the CloudFormation stack to clean up all created resources.
 
 The [CloudBD S3 Remote template](https://github.com/dev-cloudbd/cfn-templates/blob/master/remote.yml) lets you create CloudBD disks directly from CloudFormation templates using a custom resource lambda. The full documentation for using CloudBD disks with CloudFormation is available at the [CloudBD Documentation pages](https://www.cloudbd.io/docs/remote-aws-s3.html#cloudformation-setup-guide). Complete example templates for all supported Linux distros are provided in this git repository.
+
+## CFS
+
+CFS is a fully POSIX-compliant network filesystem backed by S3.
+
+### **Supported Clients**
+
+* GlusterFS Fuse Client
 
 ## CloudBD All-In-One
 

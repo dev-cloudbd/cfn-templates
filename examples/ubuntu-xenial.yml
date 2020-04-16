@@ -1,0 +1,284 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudBD - Ubuntu 16.04/Xenial'
+
+Parameters:
+  CloudBDS3RemoteStack:
+    Description: CloudBD S3 remote stack name
+    Type: String
+
+  KeyName:
+    Description: The EC2 KeyPair name allowed SSH access to the test server.
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 Key Pair
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: c5n.2xlarge
+    AllowedValues: [a1.2xlarge, a1.4xlarge, a1.large, a1.medium, a1.xlarge, c1.medium, c1.xlarge, c3.2xlarge, c3.4xlarge, c3.8xlarge, c3.large, c3.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c4.large, c4.xlarge, c5.18xlarge, c5.2xlarge, c5.4xlarge, c5.9xlarge, c5.large, c5.xlarge, c5d.18xlarge, c5d.2xlarge, c5d.4xlarge, c5d.9xlarge, c5d.large, c5d.xlarge, c5n.18xlarge, c5n.2xlarge, c5n.4xlarge, c5n.9xlarge, c5n.large, c5n.xlarge, cc1.4xlarge, cc2.8xlarge, cg1.4xlarge, cr1.8xlarge, d2.2xlarge, d2.4xlarge, d2.8xlarge, d2.xlarge, f1.16xlarge, f1.2xlarge, f1.4xlarge, g2.2xlarge, g2.8xlarge, g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, h1.16xlarge, h1.2xlarge, h1.4xlarge, h1.8xlarge, hi1.4xlarge, hs1.8xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge, i2.xlarge, i3.16xlarge, i3.2xlarge, i3.4xlarge, i3.8xlarge, i3.large, i3.metal, i3.xlarge, i3en.12xlarge, i3en.24xlarge, i3en.2xlarge, i3en.3xlarge, i3en.6xlarge, i3en.large, i3en.metal, i3en.xlarge, m1.large, m1.medium, m1.small, m1.xlarge, m2.2xlarge, m2.4xlarge, m2.xlarge, m3.2xlarge, m3.large, m3.medium, m3.xlarge, m4.10xlarge, m4.16xlarge, m4.2xlarge, m4.4xlarge, m4.large, m4.xlarge, m5.12xlarge, m5.24xlarge, m5.2xlarge, m5.4xlarge, m5.large, m5.metal, m5.xlarge, m5a.12xlarge, m5a.24xlarge, m5a.2xlarge, m5a.4xlarge, m5a.large, m5a.xlarge, m5ad.12xlarge, m5ad.16xlarge, m5ad.24xlarge, m5ad.2xlarge, m5ad.4xlarge, m5ad.8xlarge, m5ad.large, m5ad.xlarge, m5d.12xlarge, m5d.24xlarge, m5d.2xlarge, m5d.4xlarge, m5d.large, m5d.metal, m5d.xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p3dn.24xlarge, r3.2xlarge, r3.4xlarge, r3.8xlarge, r3.large, r3.xlarge, r4.16xlarge, r4.2xlarge, r4.4xlarge, r4.8xlarge, r4.large, r4.xlarge, r5.12xlarge, r5.24xlarge, r5.2xlarge, r5.4xlarge, r5.large, r5.metal, r5.xlarge, r5a.12xlarge, r5a.24xlarge, r5a.2xlarge, r5a.4xlarge, r5a.large, r5a.xlarge, r5ad.12xlarge, r5ad.16xlarge, r5ad.24xlarge, r5ad.2xlarge, r5ad.4xlarge, r5ad.8xlarge, r5ad.large, r5ad.xlarge, r5d.12xlarge, r5d.24xlarge, r5d.2xlarge, r5d.4xlarge, r5d.large, r5d.metal, r5d.xlarge, t1.micro, t2.2xlarge, t2.large, t2.medium, t2.micro, t2.nano, t2.small, t2.xlarge, t3.2xlarge, t3.large, t3.medium, t3.micro, t3.nano, t3.small, t3.xlarge, t3a.2xlarge, t3a.large, t3a.medium, t3a.micro, t3a.nano, t3a.small, t3a.xlarge, u-12tb1.metal, u-6tb1.metal, u-9tb1.metal, x1.16xlarge, x1.32xlarge, x1e.16xlarge, x1e.2xlarge, x1e.32xlarge, x1e.4xlarge, x1e.8xlarge, x1e.xlarge, z1d.12xlarge, z1d.2xlarge, z1d.3xlarge, z1d.6xlarge, z1d.large, z1d.metal, z1d.xlarge]
+    ConstraintDescription: must be a valid EC2 instance type
+  
+  SecurityGroupIds:
+    Description: List of security groups to add to the instance
+    Type: List<AWS::EC2::SecurityGroup::Id>
+
+  SubnetId:
+    Description: SubnetId to attach the instance to
+    Type: AWS::EC2::Subnet::Id
+
+Mappings:
+  # Latest mappings updated Sat Aug 3, 2019
+  UbuntuXenial:
+    us-east-1:
+      HVM64: ami-0cfee17793b08a293
+    us-east-2:
+      HVM64: ami-0f93b5fd8f220e428
+    us-west-1:
+      HVM64: ami-09eb5e8a83c7aa890
+    us-west-2:
+      HVM64: ami-0b37e9efc396e4c38
+    ca-central-1:
+      HVM64: ami-0eb3e12d3927c36ef
+    eu-central-1:
+      HVM64: ami-0085d4f8878cddc81
+    eu-west-1:
+      HVM64: ami-03746875d916becc0
+    eu-west-2:
+      HVM64: ami-0cbe2951c7cd54704
+    eu-west-3:
+      HVM64: ami-080d4d4c37b0aa206
+    eu-north-1:
+      HVM64: ami-4bd45f35
+    ap-northeast-1:
+      HVM64: ami-096c57cee908da809
+    ap-northeast-2:
+      HVM64: ami-0a25005e83c56767a
+    ap-southeast-1:
+      HVM64: ami-04613ff1fdcd2eab1
+    ap-southeast-2:
+      HVM64: ami-000c2343cf03d7fd7
+    ap-south-1:
+      HVM64: ami-03dcedc81ea3e7e27
+    sa-east-1:
+      HVM64: ami-09beb384ba644b754
+
+Conditions:
+  CloudBDUseHighperf: !Or
+    - !Or
+      - !Equals [ !Ref InstanceType, 'c5n.2xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5n.4xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5n.9xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5n.18xlarge' ]
+      - !Equals [ !Ref InstanceType, 'c5.18xlarge' ]
+      - !Equals [ !Ref InstanceType, 'g3.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'h1.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'i3.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'i3.metal' ]
+      - !Equals [ !Ref InstanceType, 'm4.16xlarge' ]
+    - !Or
+      - !Equals [ !Ref InstanceType, 'm5.24xlarge' ]
+      - !Equals [ !Ref InstanceType, 'p2.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'p3.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'r4.16xlarge' ]
+      - !Equals [ !Ref InstanceType, 'r5.12xlarge' ]
+      - !Equals [ !Ref InstanceType, 'r5.24xlarge' ]
+      - !Equals [ !Ref InstanceType, 'x1.32xlarge' ]
+      - !Equals [ !Ref InstanceType, 'x1e.32xlarge' ]
+      - !Equals [ !Ref InstanceType, 'z1d.6xlarge' ]
+      - !Equals [ !Ref InstanceType, 'z1d.12xlarge' ]
+
+Resources:
+  ExampleInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - Fn::ImportValue: !Sub '${CloudBDS3RemoteStack}:CloudBDS3RemotePolicy'
+
+  ExampleInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref ExampleInstanceRole ]
+
+  CloudBDExampleDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken:
+        Fn::ImportValue: !Sub '${CloudBDS3RemoteStack}:CloudBDDiskLambda'
+      Name: !Ref 'AWS::StackName'
+      Size: 128G
+
+  ExampleInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds: !Ref SecurityGroupIds
+      SubnetId: !Ref SubnetId
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [UbuntuXenial, !Ref 'AWS::Region', HVM64]
+      Tags:
+        - Key: Name
+          Value: !Ref 'AWS::StackName'
+      IamInstanceProfile: !Ref ExampleInstanceProfile
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -x
+            export DEBIAN_FRONTEND=noninteractive
+
+            # The regional <region>.ec2.archive.ubuntu.com sources frequently
+            # are not responsive or very very slow causing instances to time-out
+            # so let's not use them.
+            sed -i 's/http:.*\.ec2\.archive\.ubuntu\.com\/ubuntu\//mirror:\/\/mirrors\.ubuntu\.com\/mirrors\.txt/' /etc/apt/sources.list
+
+            # upgrade packages
+            apt -y update
+            apt -y upgrade
+
+            # install python pip and cfn bootstrap package
+            apt install -y --no-install-recommends python-pip python-setuptools python-wheel
+            pip install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+
+            # perform AWS::CloudFormation::Init tasks
+            RESOURCE='ExampleInstance'
+            /usr/local/bin/cfn-init -v \
+                --region ${AWS::Region} \
+                --stack ${AWS::StackName} \
+                --resource ${!RESOURCE}
+
+            # reboot if needed and signal completion to CloudFormation
+            RET=$?
+            if [ "$RET" -eq "0" ] && [ -e /var/run/reboot-required ]; then
+              cat << EOF > /etc/cron.d/cfn-signal
+            SHELL=/bin/bash
+            PATH=/sbin:/bin:/usr/sbin:/usr/bin
+            MAILTO=root
+            HOME=/
+            @reboot root { /usr/local/bin/cfn-signal -e ${!RET} --region ${AWS::Region} --stack ${AWS::StackName} --resource ${!RESOURCE}; rm /etc/cron.d/cfn-signal; } > /dev/null
+            EOF
+              reboot
+            else
+              /usr/local/bin/cfn-signal -e ${!RET} \
+                  --region ${AWS::Region} \
+                  --stack ${AWS::StackName} \
+                  --resource ${!RESOURCE}
+            fi
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+          - CloudBD
+        CloudBD:
+          files:
+            /etc/apt/sources.list.d/cloudbd.list:
+              source: 'https://repo.cloudbd.io/xenial/cloudbd.list'
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            /usr/share/keyrings/cloudbd-keyring.gpg:
+              source: https://repo.cloudbd.io/cloudbd-keyring.gpg
+              mode: "000644"
+              owner: "root"
+              group: "root"
+          commands:
+            01-install-packages:
+              # Install the CloudBD driver and CLI
+              command: !Sub |
+                set -xe
+                apt -y update
+                apt -y install cbd-client
+            02-deploy-credentials:
+              # Deploy your CloudBD account credentials
+              test: '! [ -e /etc/cloudbd/credentials.json ]'
+              command: !Sub
+              - |
+                set -xe
+
+                # ensure python pip is installed
+                apt install -y --no-install-recommends python-pip python-setuptools python-wheel
+
+                # install the AWS CLI
+                pip install awscli
+
+                # Use the GetCloudBDCredentials helper from the remote stack
+                ${GetCloudBDCredentials} > /etc/cloudbd/credentials.json
+
+                # Set the proper security permissions/ownership on the credentials file
+                chown root:cloudbd /etc/cloudbd/credentials.json
+                chmod 640 /etc/cloudbd/credentials.json
+              - GetCloudBDCredentials:
+                  Fn::ImportValue: !Sub '${CloudBDS3RemoteStack}:GetCloudBDCredentials'
+            03-attach-S3-remote:
+              # Attach the S3 remote to the instance
+              test: '! [ -e /etc/cloudbd/remotes.d/remote.conf ]'
+              command: !Sub
+              - |
+                set -xe
+                /bin/echo -E "${CloudBDS3RemoteConf}" > /etc/cloudbd/remotes.d/remote.conf
+              - CloudBDS3RemoteConf:
+                  Fn::ImportValue: !Sub '${CloudBDS3RemoteStack}:CloudBDS3RemoteConf'
+            04-attach-disk:
+              # Attach CloudBDExampleDisk to the instance
+              test: !Sub '! [ -b /dev/mapper/remote:${CloudBDExampleDisk.Name} ]'
+              command: !Sub
+              - |
+                set -xe
+
+                # Ensure that the remote disk exists
+                cloudbd info "remote:${CloudBDExampleDisk.Name}"
+
+                # If the disk is not already listed within the cbdtab, add it
+                # Each CloudBD disk attached to the instance requires a unique nbd number (0-15)
+                if ! grep -E -q "[[:space:]]remote:${CloudBDExampleDisk.Name}([[:space:]#]|\$)" /etc/cloudbd/cbdtab; then
+                  /bin/echo -E "nbd0  remote:${CloudBDExampleDisk.Name} ${DriverMode},${DriverOptions}" >> /etc/cloudbd/cbdtab
+                fi
+
+                # Start the disk
+                cbddisks_start "remote:${CloudBDExampleDisk.Name}"
+              - DriverMode: !If [CloudBDUseHighperf, 'highperf', 'defaults']
+                DriverOptions: ''
+            05-format-filesystem:
+              # Create a filesystem on the CloudBD disk and mount at '/mnt'
+              test: '! /bin/mountpoint -q /mnt'
+              command: !Sub |
+                set -xe
+                DEVICE="/dev/mapper/remote:${CloudBDExampleDisk.Name}"
+                MOUNT="/mnt"
+
+                # Ensure the CloudBD disk is attached before formatting
+                [ -b "${!DEVICE}" ]
+
+                # Check that the disk is not already formatted and create a filesystem with the recommended settings
+                if ! blkid "${!DEVICE}" | grep -q -e 'UUID' -e 'TYPE' -e 'PARTUUID'; then
+                  mkfs.ext4 -b 4096 -T largefile \
+                      -E stride=512,stripe_width=512,lazy_itable_init=0,lazy_journal_init=0,packed_meta_blocks=1 \
+                      "${!DEVICE}"
+                fi
+
+                # If the disk is not already listed in the fstab, add it
+                if ! grep -q "${!DEVICE}[[:space:]]" /etc/fstab; then
+                  # fstab requires any spaces in the mountpoint to be encoded
+                  FSTAB_ENCODED_MOUNT="$(/bin/echo ${!MOUNT} | sed -e 's/[[:space:]]/\\040/g')"
+                  /bin/echo -E "${!DEVICE}      ${!FSTAB_ENCODED_MOUNT} ext4    _netdev,discard" >> /etc/fstab
+                fi
+
+                # Create the mountpoint and mount the disk
+                mkdir -p "${!MOUNT}"
+                mount "${!DEVICE}"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
+
+Outputs:
+  InstanceId:
+    Description: The instance ID
+    Value: !Ref ExampleInstance
+    Export:
+      Name: !Sub '${AWS::StackName}::ExampleInstanceId'
+
