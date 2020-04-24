@@ -45,7 +45,7 @@ def wait_for_dns_change_completion(response):
         response = route53_client.get_change(Id=changeId)
         LOGGER.info('Get change: %s', response)
 
-    if check_response(response) and response[CHANGE_INFO_KEY]['Status'] == 'INSYNC':
+    if check_response(response) and response['ChangeInfo']['Status'] == 'INSYNC':
         LOGGER.info('Delete DNS records completed successfully.')
     else:
         LOGGER.info('Delete DNS records failed.')

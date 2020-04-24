@@ -225,7 +225,7 @@ Resources:
           CLOUDBD_CREDS_SSM_PARAM: !Ref CloudBDCredentialsParamName
       Code:
         S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
-        S3Key: 'cfn-templates/cloudbd-disk-3.0.4-1.zip'
+        S3Key: 'cfn-templates/cloudbd-disk-3.0.5-1.zip'
       Timeout: 900
       MemorySize: 512
 

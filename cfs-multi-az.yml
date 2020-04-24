@@ -1,0 +1,1614 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudBD File System (CFS) - Version 1.0 - Multi AZ'
+
+Parameters:
+  ###########################################################################
+  ## CloudBD Credentials
+  CloudBDCredentialsParamName:
+    Description: SSM Parameter Name that contains your CloudBD credentials.
+    Type: String
+    Default: '/cloudbd/credentials.json'
+
+  CloudBDCredentialsCustomKeyId:
+    Description: Customer managed KMS Key ID (not the alias) used to encrypt
+                 your CloudBD credentials SSM parameter. Leave this parameter
+                 empty if using the default SSM key ('alias/aws/ssm').
+    Type: String
+    Default: ''
+
+  ###########################################################################
+  ## VPC and Networking Parameters
+  Vpc:
+    Description: VPC to deploy CFS into
+    Type: AWS::EC2::VPC::Id
+
+  AvailabilityZone0:
+    Description: Availability zone for the CFS cluster
+    Type: AWS::EC2::AvailabilityZone::Name
+
+  AvailabilityZone1:
+    Description: Availability zone for the CFS cluster
+    Type: AWS::EC2::AvailabilityZone::Name
+
+  AvailabilityZone2:
+    Description: Availability zone for the CFS cluster
+    Type: AWS::EC2::AvailabilityZone::Name
+
+  SubnetCidr0:
+    Description: CFS private subnet IP CIDR range for availability zone 0 (x.x.x.x/n).
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
+
+  SubnetCidr1:
+    Description: CFS private subnet IP CIDR range for availability zone 1 (x.x.x.x/n).
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
+
+  SubnetCidr2:
+    Description: CFS private subnet IP CIDR range for availability zone 2 (x.x.x.x/n).
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
+
+  ############################################################################
+  ## CFS Settings Parameters
+  ClusterName:
+    Description: Name of the CFS cluster (must be unique within the VPC)
+    Type: String
+    Default: cluster
+    AllowedPattern: '[a-zA-Z0-9]{1,24}'
+    ConstraintDescription: must be between 1 and 24 characters and in the set [A-Za-z0-9]
+
+  VolumeName:
+    Description: Name of the CFS volume (must be unique within the cluster)
+    Type: String
+    Default: 'cv0'
+    AllowedPattern: '[a-zA-Z0-9]{1,24}'
+    ConstraintDescription: must be between 1 and 24 characters and in the set [A-Za-z0-9]
+
+  NumNodes:
+    Description: Number of CFS nodes
+    Type: Number
+    Default: 3
+    AllowedValues: [3,6,9,12]
+    ConstraintDescription: must be a multiple of 3 between 3 and 12
+
+  InstanceType:
+    Description: Instance type for the CFS cluster nodes
+    Type: String
+    Default: 'c5n.2xlarge'
+    AllowedValues: ['c5n.2xlarge', 'c5n.xlarge', 'c5.xlarge', 'm5.large']
+    ConstraintDescription: must be a supported instance type
+
+  PlacementStrategy:
+    Description: Placement group strategy for the CFS cluster nodes. 'cluster' provides lower latency between nodes and 'spread' provides more resilience to simulataneous node failures.
+    Type: String
+    AllowedValues: ['none', 'cluster', 'spread']
+    Default: 'none'
+
+  ############################################################################
+  ## CloudBD S3 Remote Parameters
+  CloudBDServerSideEncryption:
+    Description: Use server-side encryption with SSE-S3 (AES256).
+    Type: String
+    AllowedValues: [ 'yes', 'no' ]
+    Default: 'yes'
+
+  CloudBDHttpProtocol:
+    Description: Select the HTTP protocol to use when communicating with the
+                 remote. HTTPS encrypts all network traffic but will have
+                 higher CPU usage.
+    Type: String
+    AllowedValues: [ http, https ]
+    Default: http
+
+  ############################################################################
+  ## Node Administration Parameters
+  KeyPair:
+    Description: EC2 KeyPair for SSH access to the CFS nodes (requires CFSAdminSecurityGroup).
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 Key Pair
+
+  SsmSessionSupport:
+    Description: Enable support for SSM session access to the CFS nodes.
+    Type: String
+    AllowedValues: ['yes', 'no']
+    Default: 'yes'
+    ConstraintDescription: must be 'yes' or 'no'
+
+  CloudWatchSupport:
+    Description: Enable support for recording node metrics and logs to CloudWatch.
+    Type: String
+    AllowedValues: ['yes', 'no']
+    Default: 'yes'
+    ConstraintDescription: must be 'yes' or 'no'
+
+  Power:
+    Description: Turn the cluster nodes on or off
+    Type: String
+    AllowedValues: ['on', 'off']
+    Default: 'on'
+    ConstraintDescription: must be 'yes' or 'no'
+
+Mappings:
+  CFSNodeAmis:
+    us-east-2:
+      HVM64: ami-0d13494dfc8eb8ba4
+
+Conditions:
+  CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
+  CloudBDUsePathBasedParameter: !Equals [!Select [0, !Split ['/', !Ref CloudBDCredentialsParamName]], '']
+  CloudBDUseCustomKey: !Not [!Equals [!Ref CloudBDCredentialsCustomKeyId, '']]
+  UsePlacementGroup: !Not [!Equals ['none', !Ref PlacementStrategy]]
+  SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]
+  SsmSessionEnabledP: !And [!Condition PoweredOn, !Condition SsmSessionEnabled]
+  CloudWatchEnabled: !Equals ['yes', !Ref CloudWatchSupport]
+  CloudWatchEnabledP: !And [!Condition PoweredOn, !Condition CloudWatchEnabled]
+  Use6Nodes: !Not [!Equals [!Ref NumNodes, '3']]
+  Use6NodesP: !And [!Condition Use6Nodes, !Condition PoweredOn]
+  Use9Nodes: !And [!Condition Use6Nodes, !Not [!Equals [!Ref NumNodes, '6']]]
+  Use9NodesP: !And [!Condition Use9Nodes, !Condition PoweredOn]
+  Use12Nodes: !And [!Condition Use9Nodes, !Not [!Equals [!Ref NumNodes, '9']]]
+  Use12NodesP: !And [!Condition Use12Nodes, !Condition PoweredOn]
+  UseCache: !Equals ['0', '1'] # always false, bcache can have stability issues in detached cache state, future feature
+  PoweredOn: !Equals ['on', !Ref Power]
+
+Resources:
+  ##############################################################################
+  # Security Groups
+  CFSClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows attaching CFS volumes
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Client Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSAdminSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows SSH access to CFS nodes
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Admin Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CFS internal use only (for CFS nodes)
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 24007
+          ToPort: 24008
+          SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
+          Description: Allow GlusterFS traffic from CFS clients
+        - IpProtocol: tcp
+          FromPort: 49152
+          ToPort: 49154
+          SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
+          Description: Allow GlusterFS brick traffic from CFS clients
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          SourceSecurityGroupId: !GetAtt CFSClientSecurityGroup.GroupId
+          Description: Allow ping traffic from CFS clients
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !GetAtt CFSAdminSecurityGroup.GroupId
+          Description: Allow SSH traffic from CFS admins
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          SourceSecurityGroupId: !GetAtt CFSAdminSecurityGroup.GroupId
+          Description: Allow ping traffic from CFS admins
+
+  CFSNodeGlusterFSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 24007
+      ToPort: 24007
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow GlusterFS traffic between CFS nodes
+
+  CFSNodeGlusterFSBrickSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 49152
+      ToPort: 49154
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow GlusterFS brick traffic between CFS nodes
+
+  CFSNodeSshSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow SSH traffic between CFS nodes
+
+  CFSNodePingSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      IpProtocol: icmp
+      FromPort: 8
+      ToPort: -1
+      SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+      Description: Allow ping traffic between CFS nodes
+
+  CFSEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow CFS nodes to use VPC endpoints
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Endpoint Security Group (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !GetAtt CFSNodeSecurityGroup.GroupId
+
+  ##############################################################################
+  # Networking - Subnets and ENIs
+  CFSPrivateSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr0
+      AvailabilityZone: !Ref AvailabilityZone0
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Private Subnet 0 (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr1
+      AvailabilityZone: !Ref AvailabilityZone1
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Private Subnet 1 (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref SubnetCidr2
+      AvailabilityZone: !Ref AvailabilityZone2
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Private Subnet 2 (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSPrivateSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  CFSPrivateSubnet0RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFSPrivateSubnet0
+      RouteTableId: !Ref CFSPrivateSubnetRouteTable
+
+  CFSPrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFSPrivateSubnet1
+      RouteTableId: !Ref CFSPrivateSubnetRouteTable
+
+  CFSPrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CFSPrivateSubnet2
+      RouteTableId: !Ref CFSPrivateSubnetRouteTable
+
+  CFSNode0Eni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: 'Static IP for CFS Node 0'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet0
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 0 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode1Eni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: 'Static IP for CFS Node 1'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet1
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 1 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode2Eni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: 'Static IP for CFS Node 2'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet2
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 2 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode3Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use6Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 3'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet0
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 3 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode4Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use6Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 4'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet1
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 4 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode5Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use6Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 5'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet2
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 5 ENI - (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode6Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use9Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 6'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet0
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 6 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode7Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use9Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 7'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet1
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 7 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode8Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use9Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 8'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet2
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 8 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode9Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use12Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 9'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet0
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 9 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode10Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use12Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 10'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet1
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 10 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSNode11Eni:
+    Type: AWS::EC2::NetworkInterface
+    Condition: Use12Nodes
+    Properties:
+      Description: 'Static IP for CFS Node 11'
+      GroupSet: [!Ref CFSNodeSecurityGroup]
+      SubnetId: !Ref CFSPrivateSubnet2
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'CFS Node 11 ENI (${ClusterName})'
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  ##############################################################################
+  # Networking - VPC Endpoints
+  CFSS3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      RouteTableIds:
+        - !Ref CFSPrivateSubnetRouteTable
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+
+  CFSEc2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSCloudFormationEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.execute-api'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSSsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSSsmMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: SsmSessionEnabledP
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSLoggingEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CloudWatchEnabledP
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSMonitoringEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CloudWatchEnabledP
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.monitoring'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [ !Ref CFSEndpointSecurityGroup ]
+
+  CFSEc2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSAutoScalingEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.autoscaling'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  CFSEventsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: PoweredOn
+    Properties:
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.events'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: false
+      VpcId: !Ref Vpc
+      SubnetIds:
+        - !Ref CFSPrivateSubnet0
+        - !Ref CFSPrivateSubnet1
+        - !Ref CFSPrivateSubnet2
+      SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
+
+  ##############################################################################
+  # Networking - Route53 DNS
+  CFSMasterNodeReverseLookupHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: !Sub 'CFS reverse lookup for ${ClusterName}.cfs.cloudbd.io'
+      Name: !Sub
+        - '${S3}.${S2}.${S1}.${S0}.in-addr.arpa.'
+        - S0: !Select [0, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S1: !Select [1, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S2: !Select [2, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S3: !Select [3, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+      VPCs:
+        - VPCId: !Ref Vpc
+          VPCRegion: !Ref 'AWS::Region'
+
+  CFSMasterNodeReverseLookupRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Comment: 'Node0 ENI reverse lookup'
+      HostedZoneId: !Ref CFSMasterNodeReverseLookupHostedZone
+      Name: !Sub
+        - '${S3}.${S2}.${S1}.${S0}.in-addr.arpa.'
+        - S0: !Select [0, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S1: !Select [1, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S2: !Select [2, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+          S3: !Select [3, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
+      ResourceRecords: [!Sub 'node0.${ClusterName}.cfs.cloudbd.io']
+      Type: PTR
+      TTL: 60
+
+  CFSHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: !Sub 'CFS forward lookup for ${ClusterName}.cfs.cloudbd.io'
+      Name: !Sub '${ClusterName}.cfs.cloudbd.io'
+      VPCs:
+        - VPCId: !Ref Vpc
+          VPCRegion: !Ref 'AWS::Region'
+
+  CFSRecordSetGroup:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: "DNS entries for CFS nodes"
+      HostedZoneId: !Ref CFSHostedZone
+      RecordSets:
+        - Name: !Sub '${ClusterName}.cfs.cloudbd.io'
+          ResourceRecords:
+            - !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress
+            - !GetAtt CFSNode1Eni.PrimaryPrivateIpAddress
+            - !GetAtt CFSNode2Eni.PrimaryPrivateIpAddress
+            - !If [Use6Nodes, !GetAtt CFSNode3Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use6Nodes, !GetAtt CFSNode4Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use6Nodes, !GetAtt CFSNode5Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !GetAtt CFSNode6Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !GetAtt CFSNode7Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use9Nodes, !GetAtt CFSNode8Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+          Type: A
+          TTL: 60
+
+  # DNS records for CFS nodes are dynamically created/updated when autoscaling nodes come online.
+  # CloudFormation doesn't handle deletion of the HostedZone while these records exist.
+  # CFSRecordSetCleaner automatically deletes the dynamically created DNS records during stack deletion.
+  CFSRecordSetCleanerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: "logs"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - 'route53:ListResourceRecordSets'
+                  - 'route53:ChangeResourceRecordSets'
+                Resource: !Sub 'arn:aws:route53:::hostedzone/${CFSHostedZone}'
+              - Effect: Allow
+                Action: 'route53:GetChange'
+                Resource: '*'
+
+  CFSRecordSetCleanerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'record-set-cleaner.handler'
+      Role: !GetAtt CFSRecordSetCleanerLambdaRole.Arn
+      Runtime: 'python3.8'
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/record-set-cleaner-1.0.0-1.zip'
+      Timeout: 900
+      MemorySize: 512
+      Tags:
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CFSRecordSetCleaner:
+    Type: Custom::CFSRecordSetCleaner
+    Properties:
+      ServiceToken: !GetAtt CFSRecordSetCleanerLambda.Arn
+      ZoneId: !Ref CFSHostedZone
+      RecordNames: !Join
+        - ','
+        - - !Sub 'node0.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node1.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node2.${ClusterName}.cfs.cloudbd.io.'
+          - !If [Use6Nodes, !Sub 'node3.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use6Nodes, !Sub 'node4.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use6Nodes, !Sub 'node5.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use9Nodes, !Sub 'node6.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use9Nodes, !Sub 'node7.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use9Nodes, !Sub 'node8.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use12Nodes, !Sub 'node9.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use12Nodes, !Sub 'node10.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !If [Use12Nodes, !Sub 'node11.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+
+  ##############################################################################
+  # CloudBD S3 Remote - For high-performance storage of CFS data to S3
+  CloudBDS3RemoteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        !If
+          - CloudBDUseEncryption
+          - ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault: { SSEAlgorithm: 'AES256' }
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  CloudBDS3RemotePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Grants access to the CloudBD S3 remote bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: 'ssm:GetParameter'
+            Resource: !If
+              - CloudBDUsePathBasedParameter
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${CloudBDCredentialsParamName}'
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${CloudBDCredentialsParamName}'
+          - !If # Allow decrypt of the CloudBD credentials.json parameter if using a custom key
+              - CloudBDUseCustomKey
+              - Effect: Allow
+                Action: 'kms:Decrypt'
+                Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${CloudBDCredentialsCustomKeyId}'
+              - !Ref 'AWS::NoValue'
+          - Effect: Allow
+            Action: 's3:ListBucket'
+            Resource: !GetAtt CloudBDS3RemoteBucket.Arn
+          - Effect: Allow
+            Action: 's3:HeadBucket'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 's3:PutObject'
+              - 's3:GetObject'
+              - 's3:DeleteObject'
+            Resource: !Sub '${CloudBDS3RemoteBucket.Arn}/cloudbd/*'
+
+  CloudBDDiskLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns: [ !Ref CloudBDS3RemotePolicy ]
+      Policies:
+        - PolicyName: "logs"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  CloudBDDiskLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'cloudbd-disk.handler'
+      Role: !GetAtt CloudBDDiskLambdaRole.Arn
+      Runtime: 'python3.8'
+      Environment:
+        Variables:
+          CLOUDBD_REMOTE_BUCKET: !Ref CloudBDS3RemoteBucket
+          CLOUDBD_CREDS_SSM_REGION: !Ref 'AWS::Region'
+          CLOUDBD_CREDS_SSM_PARAM: !Ref CloudBDCredentialsParamName
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/cloudbd-disk-3.0.4-1.zip'
+      Timeout: 900
+      MemorySize: 512
+      Tags:
+        - Key: 'CFSClusterName'
+          Value: !Ref ClusterName
+
+  ##############################################################################
+  # CFS Node Resources
+  CFSNode0CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk0'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode1CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk1'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode2CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk2'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode3CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk3'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode4CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk4'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode5CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk5'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode6CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk6'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode7CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk7'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode8CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk8'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode9CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk9'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode10CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk10'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNode11CloudBDDisk:
+    Type: Custom::CloudBDDisk
+    Properties:
+      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
+      Name: !Sub 'cfs_${ClusterName}_disk11'
+      Size: '134217856M' # 128T + 128M
+
+  CFSNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'ec2.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref CloudBDS3RemotePolicy
+        - !If
+          - SsmSessionEnabled
+          - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+          - !Ref 'AWS::NoValue'
+        - !If
+          - CloudWatchEnabled
+          - 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy'
+          - !Ref 'AWS::NoValue'
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:DescribeAutoScalingGroups' # Power status in terminate scripts using ASG desired count
+                  - 'ec2:AttachNetworkInterface'            # Attach static IP ENI to nodes
+                  - 'ec2:DescribeInstances'                 # Prevent duplicate node startup on separate subnets that can cause data corruption
+                  - 'ec2:DescribeNetworkInterfaceAttribute' # Node identification
+                  - 'ec2:DescribeTags'                      # Identify ASG name, CFN Stack name, CFS node group
+                  - 'events:PutEvents'                      # Trigger startup route 53 dns update in lifecycle lambda
+                  - !If [UseCache, 'ec2:DescribeInstanceAttribute', !Ref 'AWS::NoValue'] # Identify cache volume
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:CreateTags'                        # Set the CFSNodeID tag on startup / protect against duplicate node startup
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CFSClusterName: !Ref ClusterName
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:CompleteLifecycleAction'   # Complete lifecycle startup and terminate hooks
+                  - 'autoscaling:RecordLifecycleActionHeartbeat' # Send heartbeat for lifecycle startup and terminate hooks
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    autoscaling:ResourceTag/CFSClusterName: !Ref ClusterName
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:DescribeStackResource'  # Detect stack termination status in instance terminate scripts
+                Resource: !Ref 'AWS::StackId'
+
+  CFSNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref CFSNodeRole]
+
+  CFSPlacementGroup:
+    Condition: UsePlacementGroup
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: !Ref PlacementStrategy
+
+  CFSLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: # Missing dependencies to force graceful terminate
+      - CFSS3VpcEndpoint
+      - CFSNodeGlusterFSBrickSecurityGroupIngress
+      - CFSNodeGlusterFSSecurityGroupIngress
+      - CFSNodeSshSecurityGroupIngress
+      - CFSNodePingSecurityGroupIngress
+      - CFSPrivateSubnet0RouteTableAssociation
+      - CFSPrivateSubnet1RouteTableAssociation
+      - CFSPrivateSubnet2RouteTableAssociation
+      - CFSRecordSetGroup
+      - CFSRecordSetCleaner
+      - CFSMasterNodeReverseLookupRecordSet
+      - CFSAutoScalingGroupStartupLifecycleHookEventRulePermission
+      - CFSAutoScalingGroupTerminateLifecycleHookEventRulePermission
+      - CFSAutoScalingGroupTerminateLifecycleHookFailureEventRulePermission
+    Condition: PoweredOn
+    Properties:
+      ImageId: !FindInMap [CFSNodeAmis, !Ref 'AWS::Region', HVM64]
+      SecurityGroups: [!Ref CFSNodeSecurityGroup]
+      InstanceType: !Ref InstanceType
+      EbsOptimized: true
+      IamInstanceProfile: !Ref CFSNodeInstanceProfile
+      InstanceMonitoring: false
+      KeyName: !Ref KeyPair
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            CFS_INSTANCE_ID="$(curl -s http://169.254.169.254:/latest/meta-data/instance-id)"
+            CFS_ASG_NAME="$(aws ec2 describe-tags \
+                --filters Name=key,Values=aws:autoscaling:groupName \
+                          Name=resource-id,Values="$CFS_INSTANCE_ID" \
+                --region ${AWS::Region} \
+                --endpoint-url "https://${CFSEc2EndpointDns}" \
+                --query 'Tags[0].Value' \
+                --output text)"
+            AWS_CFN_NAME="$(aws ec2 describe-tags \
+                --filters Name=key,Values=aws:cloudformation:logical-id \
+                          Name=resource-id,Values="$CFS_INSTANCE_ID" \
+                --region ${AWS::Region} \
+                --endpoint-url "https://${CFSEc2EndpointDns}" \
+                --query 'Tags[0].Value' \
+                --output text)"
+            CFS_NODE_GROUP="$(aws ec2 describe-tags \
+                --filters Name=key,Values=CFSNodeGroup \
+                          Name=resource-id,Values="$CFS_INSTANCE_ID" \
+                --region ${AWS::Region} \
+                --endpoint-url "https://${CFSEc2EndpointDns}" \
+                --query Tags[0].Value \
+                --output text)"
+
+            cat << EOF > /opt/cfs/cfs.conf
+            AWS_REGION="${AWS::Region}"
+            AWS_STACK_NAME="${AWS::StackName}"
+            AWS_CFN_NAME="$AWS_CFN_NAME"
+            CFS_INSTANCE_ID="$CFS_INSTANCE_ID"
+            CFS_NODE_GROUP="$CFS_NODE_GROUP"
+            CFS_NODE_IPS='${CFSNodeIps}'
+            CFS_ASG_NAME="$CFS_ASG_NAME"
+            CFS_ASG_RESOURCE="CFSAutoScalingGroup$CFS_NODE_GROUP"
+            CFS_ENI_IDS='${CFSNodeEnis}'
+            CFS_ENI_INTERFACE="ens6"
+            CFS_ENI_DEVICE_INDEX="1"
+            CLOUDBD_CREDENTIALS_REGION="${AWS::Region}"
+            CLOUDBD_CREDENTIALS_PARAM_NAME="${CloudBDCredentialsParamName}"
+            CLOUDBD_REMOTE_NAME="remote"
+            CLOUDBD_REMOTE_BUCKET="${CloudBDS3RemoteBucket}"
+            CLOUDBD_REMOTE_HTTP_PROTOCOL="${CloudBDHttpProtocol}"
+            CLOUDBD_DISK_NAMES='${CloudBDDiskNames}'
+            CFS_CLUSTER_NAME="${ClusterName}"
+            CFS_VOLUME_NAMES="${VolumeName}"
+            CFS_SNAPSHOT_SUPPORT="yes"
+            CFS_USE_CACHE="no"
+            CFS_EC2_ENDPOINT_DNS="${CFSEc2EndpointDns}"
+            CFS_CLOUDFORMATION_ENDPOINT_DNS="${CFSCloudFormationEndpointDns}"
+            CFS_AUTOSCALING_ENDPOINT_DNS="${CFSAutoScalingEndpointDns}"
+            CFS_API_ENDPOINT_DNS="${CFSApiEndpointDns}"
+            CFS_SSM_ENDPOINT_DNS="${CFSSsmEndpointDns}"
+            CFS_SSMMESSAGES_ENDPOINT_DNS="${CFSSsmMessagesEndpointDns}"
+            CFS_MONITORING_ENDPOINT_DNS="${CFSMonitoringEndpointDns}"
+            CFS_LOGGING_ENDPOINT_DNS="${CFSLoggingEndpointDns}"
+            CFS_CLOUDWATCH_SUPPORT="${CloudWatchSupport}"
+            CFS_EC2MESSAGES_ENDPOINT_DNS="${CFSEc2MessagesEndpointDns}"
+            CFS_EVENTS_ENDPOINT_DNS="${CFSEventsEndpointDns}"
+            EOF
+
+            /opt/cfs/scripts/startup
+            exit $?
+          - CFSNodeEnis: !Join
+              - ','
+              - - !Ref CFSNode0Eni
+                - !Ref CFSNode1Eni
+                - !Ref CFSNode2Eni
+                - !If [Use6Nodes, !Ref CFSNode3Eni, !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !Ref CFSNode4Eni, !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !Ref CFSNode5Eni, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !Ref CFSNode6Eni, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !Ref CFSNode7Eni, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !Ref CFSNode8Eni, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !Ref CFSNode9Eni, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !Ref CFSNode10Eni, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !Ref CFSNode11Eni, !Ref 'AWS::NoValue']
+            CFSNodeIps: !Join
+              - ','
+              - - !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress
+                - !GetAtt CFSNode1Eni.PrimaryPrivateIpAddress
+                - !GetAtt CFSNode2Eni.PrimaryPrivateIpAddress
+                - !If [Use6Nodes, !GetAtt CFSNode3Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !GetAtt CFSNode4Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !GetAtt CFSNode5Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !GetAtt CFSNode6Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !GetAtt CFSNode7Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !GetAtt CFSNode8Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
+            CloudBDDiskNames: !Join
+              - ','
+              - - !GetAtt CFSNode0CloudBDDisk.Name
+                - !GetAtt CFSNode1CloudBDDisk.Name
+                - !GetAtt CFSNode2CloudBDDisk.Name
+                - !If [Use6Nodes, !GetAtt CFSNode3CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !GetAtt CFSNode4CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use6Nodes, !GetAtt CFSNode5CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !GetAtt CFSNode6CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !GetAtt CFSNode7CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use9Nodes, !GetAtt CFSNode8CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !GetAtt CFSNode9CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !GetAtt CFSNode10CloudBDDisk.Name, !Ref 'AWS::NoValue']
+                - !If [Use12Nodes, !GetAtt CFSNode11CloudBDDisk.Name, !Ref 'AWS::NoValue']
+            CFSEc2EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2Endpoint.DnsEntries]]]
+            CFSCloudFormationEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSCloudFormationEndpoint.DnsEntries]]]
+            CFSApiEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSApiEndpoint.DnsEntries]]]
+            CFSSsmEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmEndpoint.DnsEntries]]]
+            CFSEc2MessagesEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2MessagesEndpoint.DnsEntries]]]
+            CFSAutoScalingEndpointDns: !Select [ '1', !Split [ ':', !Select [ '0', !GetAtt CFSAutoScalingEndpoint.DnsEntries ] ] ]
+            CFSSsmMessagesEndpointDns: !If
+              - SsmSessionEnabledP
+              - !Select [1, !Split [':', !Select [0, !GetAtt CFSSsmMessagesEndpoint.DnsEntries]]]
+              - !Sub 'ssmmessages.${AWS::Region}.amazonaws.com'
+            CFSMonitoringEndpointDns: !If
+              - CloudWatchEnabledP
+              - !Select [1, !Split [':', !Select [0, !GetAtt CFSMonitoringEndpoint.DnsEntries]]]
+              - !Sub 'monitoring.${AWS::Region}.amazonaws.com'
+            CFSLoggingEndpointDns: !If
+              - CloudWatchEnabledP
+              - !Select [1, !Split [':', !Select [0, !GetAtt CFSLoggingEndpoint.DnsEntries]]]
+              - !Sub 'logs.${AWS::Region}.amazonaws.com'
+            CFSEventsEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEventsEndpoint.DnsEntries]]]
+
+  CFSAutoScalingGroup0:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: PoweredOn
+    Properties:
+      AvailabilityZones: [!Ref AvailabilityZone]
+      MinSize: !If [PoweredOn, '3', '0']
+      MaxSize: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
+      LaunchConfigurationName: !Ref CFSLaunchConfiguration
+      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
+      VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
+      Tags:
+        - Key: 'Name'
+          PropagateAtLaunch: true
+          Value: 'CFS Node'
+        - Key: 'CFSClusterName'
+          PropagateAtLaunch: true
+          Value: !Ref ClusterName
+        - Key: 'CFSNodeGroup'
+          PropagateAtLaunch: true
+          Value: '0'
+        - Key: 'CFSNodeId'
+          PropagateAtLaunch: true
+          Value: 'None'
+        - Key: 'CFSDependsOn'   # Force master node updates after all other groups for clean expansion
+          PropagateAtLaunch: false
+          Value: !Join
+            - ','
+            - - !If [Use6Nodes, !Ref CFSAutoScalingGroup1, !Ref 'AWS::NoValue']
+              - !If [Use9Nodes, !Ref CFSAutoScalingGroup2, !Ref 'AWS::NoValue']
+              - !If [Use12Nodes, !Ref CFSAutoScalingGroup3, !Ref 'AWS::NoValue']
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: !If [PoweredOn, '2', '0']
+        MinSuccessfulInstancesPercent: 100
+
+  CFSAutoScalingGroup1:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: Use6NodesP
+    Properties:
+      AvailabilityZones: [!Ref AvailabilityZone]
+      MinSize: !If [PoweredOn, '3', '0']
+      MaxSize: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
+      LaunchConfigurationName: !Ref CFSLaunchConfiguration
+      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
+      VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
+      Tags:
+        - Key: 'Name'
+          PropagateAtLaunch: true
+          Value: 'CFS Node'
+        - Key: 'CFSClusterName'
+          PropagateAtLaunch: true
+          Value: !Ref ClusterName
+        - Key: 'CFSNodeGroup'
+          PropagateAtLaunch: true
+          Value: '1'
+        - Key: 'CFSNodeId'
+          PropagateAtLaunch: true
+          Value: 'None'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: !If [PoweredOn, '2', '0']
+        MinSuccessfulInstancesPercent: 100
+
+  CFSAutoScalingGroup2:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: Use9NodesP
+    Properties:
+      AvailabilityZones: [!Ref AvailabilityZone]
+      MinSize: !If [PoweredOn, '3', '0']
+      MaxSize: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
+      LaunchConfigurationName: !Ref CFSLaunchConfiguration
+      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
+      VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
+      Tags:
+        - Key: 'Name'
+          PropagateAtLaunch: true
+          Value: 'CFS Node'
+        - Key: 'CFSClusterName'
+          PropagateAtLaunch: true
+          Value: !Ref ClusterName
+        - Key: 'CFSNodeGroup'
+          PropagateAtLaunch: true
+          Value: '2'
+        - Key: 'CFSNodeId'
+          PropagateAtLaunch: true
+          Value: 'None'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: !If [PoweredOn, '2', '0']
+        MinSuccessfulInstancesPercent: 100
+
+  CFSAutoScalingGroup3:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Condition: Use12NodesP
+    Properties:
+      AvailabilityZones: [!Ref AvailabilityZone]
+      MinSize: !If [PoweredOn, '3', '0']
+      MaxSize: '3'
+      DesiredCapacity: !If [PoweredOn, '3', '0']
+      LaunchConfigurationName: !Ref CFSLaunchConfiguration
+      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
+      VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'ABANDON'
+        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
+          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
+          HeartbeatTimeout: 900
+          DefaultResult: 'CONTINUE'
+      Tags:
+        - Key: 'Name'
+          PropagateAtLaunch: true
+          Value: 'CFS Node'
+        - Key: 'CFSClusterName'
+          PropagateAtLaunch: true
+          Value: !Ref ClusterName
+        - Key: 'CFSNodeGroup'
+          PropagateAtLaunch: true
+          Value: '3'
+        - Key: 'CFSNodeId'
+          PropagateAtLaunch: true
+          Value: 'None'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: !If [PoweredOn, '2', '0']
+        MinSuccessfulInstancesPercent: 100
+
+  CFSStartStopVolumes:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Start or stop export of Gluster volume(s)
+        parameters:
+          action:
+            type: String
+            allowedValues: ['start', 'stop']
+          volume:
+            type: String
+            description: ('Optional') Comma separated list of which volume(s) to start/stop or the keyword 'ALL_VOLUMES'
+            allowedPattern: '[a-zA-Z0-9_,]{1,24}'
+            default: 'ALL_VOLUMES'
+        mainSteps:
+          - action: aws:runShellScript
+            name: executeStartStopCmd
+            inputs:
+              timeoutSeconds: 600  # 10 minutes
+              runCommand:
+                - |
+                  # Gluster management daemon restart required due to bug in glusterd dns refresh
+                  systemctl restart glusterd
+                  sleep 5
+
+                  /opt/cfs/scripts/start-stop-volume {{action}} {{volume}}
+                  exit $?
+
+  CFSAutoScalingGroupLifecycleHookSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Run an auto scaling group lifecycle hook
+        parameters:
+          force:
+            type: String
+            description: '(Optional) lifecycle scripts invoked with the force flag set'
+            default: 'no'
+            allowedValues: ['yes', 'no']
+        mainSteps:
+          - action: aws:runShellScript
+            name: executeAsgLifecycleHook
+            inputs:
+              timeoutSeconds: 86400  # 1 day
+              runCommand:
+                - |
+                  export FORCE="{{force}}"
+                  /opt/cfs/scripts/terminate
+                  exit $?
+
+  CFSAutoScalingGroupLifecycleHookLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: 'lambda.amazonaws.com' }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMFullAccess'
+      Policies:
+        - PolicyName: "root"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:CompleteLifecycleAction'
+                  - 'ec2:DescribeTags'
+                Resource: '*'
+              - Effect: Allow
+                Action: 'route53:ChangeResourceRecordSets'
+                Resource: !Sub 'arn:aws:route53:::hostedzone/${CFSHostedZone}'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  CFSAutoScalingGroupLifecycleHookLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: 'cfs-asg-lifecycle-hook.handler'
+      Role: !GetAtt CFSAutoScalingGroupLifecycleHookLambdaRole.Arn
+      Runtime: 'python3.8'
+      Code:
+        S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
+        S3Key: 'cfn-templates/cfs-asg-lifecycle-hook-1.0.0-1.zip'
+      Environment:
+        Variables:
+          LIFECYCLE_HOOK_DOCUMENT_NAME: !Ref CFSAutoScalingGroupLifecycleHookSSMDocument
+          LIFECYCLE_HOOK_NAME: !Sub 'CFS-${ClusterName}-SafeTerminte'
+          ROUTE53_HOSTED_ZONE: !Ref CFSHostedZone
+      Timeout: 120
+      MemorySize: 512
+
+  CFSAutoScalingGroupStartupLifecycleHookEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Execute ASG startup lifecycle hook lambda'
+      EventPattern:
+        source:
+          - 'cfs.autoscaling'
+        detail-type:
+          - 'CFS Node Update DNS Action'
+        detail:
+          ClusterName:
+            - !Ref ClusterName
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CFSAutoScalingGroupLifecycleHookLambda.Arn
+          Id: CFSAutoScalingLifecycleHook
+
+  CFSAutoScalingGroupTerminateLifecycleHookEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Execute ASG terminate lifecycle hook lambda'
+      EventPattern:
+        source:
+          - 'aws.autoscaling'
+        detail-type:
+          - 'EC2 Instance-terminate Lifecycle Action'
+        detail:
+          LifecycleHookName:
+            - !Sub 'CFS-${ClusterName}-SafeTerminate'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CFSAutoScalingGroupLifecycleHookLambda.Arn
+          Id: CFSAutoScalingLifecycleHook
+
+  CFSAutoScalingGroupTerminateLifecycleHookFailureEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Execute ASG terminate lifecycle hook lambda with force=true'
+      EventPattern:
+        source:
+          - 'aws.ssm'
+        detail-type:
+          - 'EC2 Command Invocation Status-change Notification'
+        detail:
+          document-name:
+            - !Ref CFSAutoScalingGroupLifecycleHookSSMDocument
+          status:
+            - 'TimedOut'
+            - 'Failed'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CFSAutoScalingGroupLifecycleHookLambda.Arn
+          Id: CFSAutoScalingLifecycleHook
+
+  CFSAutoScalingGroupStartupLifecycleHookEventRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CFSAutoScalingGroupLifecycleHookLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CFSAutoScalingGroupStartupLifecycleHookEventRule.Arn
+
+  CFSAutoScalingGroupTerminateLifecycleHookEventRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CFSAutoScalingGroupLifecycleHookLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CFSAutoScalingGroupTerminateLifecycleHookEventRule.Arn
+
+  CFSAutoScalingGroupTerminateLifecycleHookFailureEventRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CFSAutoScalingGroupLifecycleHookLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CFSAutoScalingGroupTerminateLifecycleHookFailureEventRule.Arn
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'CloudBD Credentials'
+        Parameters:
+          - CloudBDCredentialsParamName
+          - CloudBDCredentialsCustomKeyId
+      - Label:
+          default: 'VPC and Network Settings'
+        Parameters:
+          - Vpc
+          - AvailabilityZone
+          - SubnetCidr
+      - Label:
+          default: 'CFS Settings'
+        Parameters:
+          - ClusterName
+          - VolumeName
+          - NumNodes
+          - InstanceType
+          - PlacementStrategy
+      - Label:
+          default: 'S3 Backend Settings'
+        Parameters:
+          - CloudBDServerSideEncryption
+          - CloudBDHttpProtocol
+      - Label:
+          default: 'Admin Settings'
+        Parameters:
+          - Power
+          - KeyPair
+          - SsmSessionSupport
+          - CloudWatchSupport
+    ParameterLabels:
+      Vpc:
+        default: 'VPC ID'
+      AvailabilityZone:
+        default: 'Availability Zone'
+      SubnetCidr:
+        default: 'Subnet CIDR'
+      ClusterName:
+        default: 'Cluster Name'
+      VolumeName:
+        default: 'Volume Name'
+      NumNodes:
+        default: 'No. of Nodes'
+      InstanceType:
+        default: 'Instance Type'
+      PlacementStrategy:
+        default: 'Placement Strategy'
+      CloudBDCredentialsParamName:
+        default: 'SSM Parameter Name'
+      CloudBDCredentialsCustomKeyId:
+        default: 'Custom KMS Key'
+      CloudBDServerSideEncryption:
+        default: 'Server-Side Encryption'
+      CloudBDHttpProtocol:
+        default: 'HTTP Protocol'
+      KeyPair:
+        default: 'Key Pair'
+      SsmSessionSupport:
+        default: 'SSM Session Support'
+      CloudWatchSupport:
+        default: 'CloudWatch Support'
+
+Outputs:
+  CFSClientSecurityGroup:
+    Description: Security group ID allowed to attach CFS volumes
+    Value: !GetAtt CFSClientSecurityGroup.GroupId
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClientSecurityGroup'
+
+  CFSAdminSecurityGroup:
+    Description: Security group ID allowed to SSH to CFS nodes
+    Value: !GetAtt CFSAdminSecurityGroup.GroupId
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSAdminSecurityGroup'
+
+  CFSClusterName:
+    Description: Name of the CFS cluster
+    Value: !Ref ClusterName
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClusterName'
+
+  CFSVolumeName:
+    Description: Name of the CFS volume
+    Value: !Ref VolumeName
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSVolumeName'
+
+  CFSClusterDnsName:
+    Description: DNS name of the CFS cluster
+    Value: !Sub '${ClusterName}.cfs.cloudbd.io'
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClusterDnsName'
