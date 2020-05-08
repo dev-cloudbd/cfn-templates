@@ -10,40 +10,40 @@ Parameters:
     ConstraintDescription: must be a valid subnet ID
 
 Mappings:
-  # Latest mappings updated Mon Apr 13, 2020
+  # Latest mappings updated Fri May 8, 2020
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-085925f297f89fce1
+      HVM64: ami-05801d0a3c8e4c443
     us-east-2:
-      HVM64: ami-07c1207a9d40bc3bd
+      HVM64: ami-0a040c35ca945058a
     us-west-1:
-      HVM64: ami-0f56279347d2fa43e
+      HVM64: ami-0365b50e7a63e3bf1
     us-west-2:
-      HVM64: ami-003634241a8fcdec0
+      HVM64: ami-06ffade19910cbfc0
     ca-central-1:
-      HVM64: ami-0edd51cc29813e254
+      HVM64: ami-0628c8183517a434a
     eu-central-1:
-      HVM64: ami-0e342d72b12109f91
+      HVM64: ami-0b6d8a6db0c665fb7
     eu-west-1:
-      HVM64: ami-0701e7be9b2a77600
+      HVM64: ami-0964eb2dc8b836eb6
     eu-west-2:
-      HVM64: ami-0eb89db7593b5d434
+      HVM64: ami-09d9cc949a8e2e8b3
     eu-west-3:
-      HVM64: ami-08c757228751c5335
+      HVM64: ami-06d9c6325dbcc4e62
     eu-north-1:
-      HVM64: ami-050981837962d44ac
+      HVM64: ami-018de7985594be421
     ap-northeast-1:
-      HVM64: ami-0278fe6949f6b1a06
+      HVM64: ami-081e053d3c3cd94f1
     ap-northeast-2:
-      HVM64: ami-00edfb46b107f643c
+      HVM64: ami-04a51618f807bd431
     ap-southeast-1:
-      HVM64: ami-0f7719e8b7ba25c61
+      HVM64: ami-0e763a959ec839f5e
     ap-southeast-2:
-      HVM64: ami-04fcc97b5f6edcd89
+      HVM64: ami-0051f0f3f07a8934a
     ap-south-1:
-      HVM64: ami-0b44050b2d893d5f7
+      HVM64: ami-07ae4f0fa498eede9
     sa-east-1:
-      HVM64: ami-077d5d3682940b34a
+      HVM64: ami-0a8302bf9ba144bf1
 
 Resources:
   ##############################################################################
@@ -294,6 +294,34 @@ Resources:
               mode: "000644"
               owner: "root"
               group: "root"
+            /etc/systemd/resolved.conf:
+              content: |
+                This file is part of systemd.
+                #
+                #  systemd is free software; you can redistribute it and/or modify it
+                #  under the terms of the GNU Lesser General Public License as published by
+                #  the Free Software Foundation; either version 2.1 of the License, or
+                #  (at your option) any later version.
+                #
+                # Entries in this file show the compile time defaults.
+                # You can change settings by editing this file.
+                # Defaults can be restored by simply deleting this file.
+                #
+                # See resolved.conf(5) for details
+
+                [Resolve]
+                #DNS=
+                #FallbackDNS=
+                #Domains=
+                #LLMNR=no
+                #MulticastDNS=no
+                #DNSSEC=no
+                #Cache=yes
+                #DNSStubListener=yes
+                Cache=no
+              mode: "000644"
+              owner: "root"
+              group: "root"
           commands:
             01-disable-apport:
               command: |
@@ -351,282 +379,6 @@ Resources:
               mode: "000644"
               owner: "root"
               group: "root"
-            /opt/cfs/startup.d/10-node:
-              content: |
-                #!/bin/bash
-                # Required IAM permissions:
-                #       ec2:AttachNetworkInterfaces - attach node ENI
-                #       ec2:DescribeNetworkInterfaceAttribute - identify already attached node ENI
-                . /opt/cfs/cfs.functions
-                . /opt/cfs/cfs.conf
-
-                if [ -f /opt/cfs/node.conf ]; then
-                  log_info "Node already configured... skipping"
-                  exit_success
-                else
-                  log_info "Configuring node"
-                fi
-
-                IFS="," read -ra CFS_ENI_IDS <<< "$CFS_ENI_IDS"
-                GROUP_OFFSET=$((3 * CFS_NODE_GROUP))
-                CFS_NODE_ID=""
-
-                # Check for an already attached ENI
-                for ((i = 0; i < 3; i++)); do
-                  ID=$((GROUP_OFFSET + i))
-                  INSTANCE_ID="$(aws ec2 describe-network-interface-attribute \
-                      --region "$AWS_REGION" \
-                      --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
-                      --network-interface-id "${CFS_ENI_IDS[ID]}" \
-                      --attribute attachment \
-                      --query Attachment.InstanceId \
-                      --output text)"
-
-                  if [ "$?" -ne 0 ]; then
-                    log_error "Unable to describe network interface attribute"
-                    exit_error
-                  fi
-
-                  if [ "x$INSTANCE_ID" = "x$CFS_INSTANCE_ID" ]; then
-                    log_info "Found already attached ENI id = ${CFS_ENI_IDS[ID]}"
-                    CFS_NODE_ID="$ID"
-                    break
-                  fi
-                done
-
-                if [ "x$CFS_NODE_ID" = "x" ]; then
-                  # If no ENI attached:
-                  #   Loop over all ENIs to find an available one to attach
-                  #   Set the node ID associated with that ENI
-                  LAUNCH_INDEX="$(get_ec2_meta 'ami-launch-index')"
-
-                  for ((i = 0; i < 3; i++)); do
-                    ID=$((GROUP_OFFSET + (LAUNCH_INDEX + i) % 3))
-
-                    # Safety check to prevent attaching an ENI for a cluster node that is still running
-                    # (Stack update subnet migration can create new ENIs and rolling update -- need this
-                    #  check to ensure we try to come up as the correct replace node ID)
-                    INSTANCE_IDS="$(aws ec2 describe-instances \
-                        --region "$AWS_REGION" \
-                        --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
-                        --filters "Name=tag:CFSClusterName,Values=$CFS_CLUSTER_NAME" \
-                                  "Name=tag:CFSNodeId,Values=$ID" \
-                                  "Name=instance-state-name,Values=running" \
-                        --query "Reservations[*].Instances[*].InstanceId" \
-                        --output text)"
-
-                    if [ "$?" -ne 0 ]; then
-                      log_error "Unable to describe instances"
-                      exit_error
-                    elif [ "x$INSTANCE_IDS" != "x" ] && [ "x$INSTANCE_IDS" != "x$CFS_INSTANCE_ID" ]; then
-                      continue
-                    fi
-
-                    aws ec2 attach-network-interface \
-                        --network-interface-id "${CFS_ENI_IDS[ID]}" \
-                        --instance-id "$CFS_INSTANCE_ID" \
-                        --region "$AWS_REGION" \
-                        --device-index "$CFS_ENI_DEVICE_INDEX" \
-                        --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS"
-
-                    if [ "$?" -eq 0 ]; then
-                      log_info "Attached ENI id = ${CFS_ENI_IDS[ID]}"
-                      CFS_NODE_ID="$ID"
-                      break
-                    fi
-                  done
-                fi
-
-                if [ "x$CFS_NODE_ID" = "x" ]; then
-                  log_info "No available ENI found... retry"
-                  exit_retry
-                fi
-
-                # Redundant extra safety check to prevent forward progress until old node is down
-                # (Must prevent CloudBD disk from being attach to two active nodes at the same time)
-                INSTANCE_IDS="$(aws ec2 describe-instances \
-                    --region "$AWS_REGION" \
-                    --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
-                    --filters "Name=tag:CFSClusterName,Values=$CFS_CLUSTER_NAME" \
-                              "Name=tag:CFSNodeId,Values=$CFS_NODE_ID" \
-                              "Name=instance-state-name,Values=running" \
-                    --query "Reservations[*].Instances[*].InstanceId" \
-                    --output text)"
-
-                if [ "$?" -ne 0 ]; then
-                  log_error "Unable to describe instances"
-                  exit_error
-                fi
-
-                for ID in $INSTANCE_IDS; do
-                  if [ "x$ID" != "x$CFS_INSTANCE_ID" ]; then
-                    log_info "Found old node still running... retry"
-                    exit_retry
-                  fi
-                done
-
-                aws ec2 create-tags \
-                    --region "$AWS_REGION" \
-                    --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
-                    --resources "$CFS_INSTANCE_ID" \
-                    --tags "Key=CFSNodeId,Value=$ID"
-
-                if [ "$?" -ne 0 ]; then
-                  log_error "Unable to create tags"
-                  exit_error
-                fi
-
-                echo "CFS_NODE_ID=$CFS_NODE_ID" > /opt/cfs/node.conf
-                log_info "Configured node = $ID"
-                exit_success
-              mode: "000755"
-              owner: "root"
-              group: "root"
-            /opt/cfs/startup.d/11-network:
-              content: |
-                #!/bin/bash
-                . /opt/cfs/cfs.functions
-                . /opt/cfs/cfs.conf
-                . /opt/cfs/node.conf
-
-                if [ -f /opt/cfs/network.conf ]; then
-                  log_info "Network already configured... skipping"
-                  exit_success
-                else
-                  log_info "Configuring network"
-                fi
-
-                IFS="," read -ra CFS_NODE_IPS <<< "$CFS_NODE_IPS"
-                CFS_NODE_IP="${CFS_NODE_IPS[CFS_NODE_ID]}"
-                CFS_NODE_HOSTNAME="node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
-                CFS_NUM_NODES="${#CFS_NODE_IPS[@]}"
-
-                # Set local hostname
-                if ! hostname | grep -q "$CFS_NODE_HOSTNAME"; then
-                  hostnamectl set-hostname "$CFS_NODE_HOSTNAME"
-
-                  if [ "$?" -ne 0 ]; then
-                    log_error "Unable to set hostname"
-                    exit_error
-                  fi
-
-                  log_info "Configured hostname = $CFS_NODE_HOSTNAME"
-                else
-                  log_info "Hostname already configured"
-                fi
-
-                # Configure Linux networking for the attached ENI
-                if [ ! -f /etc/netplan/51-$CFS_ENI_INTERFACE.yaml ]; then
-                  attempts=15
-                  CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
-                  while test "x$CFS_ENI_HWADDR" = "x00:00:00:00:00:00" || test "x$CFS_ENI_HWADDR" = "x"; do
-                    if [ "$attempts" -eq 0 ]; then
-                      log_info "Attached ENI HW ADDR not ready... retry"
-                      exit_retry
-                    fi
-
-                    let attempts--
-                    sleep 1
-
-                    CFS_ENI_HWADDR="$(cat /sys/class/net/$CFS_ENI_INTERFACE/address 2>/dev/null)"
-                  done
-
-                  CFS_ENI_CIDR="$(get_ec2_meta "network/interfaces/macs/$CFS_ENI_HWADDR/subnet-ipv4-cidr-block")"
-                  CFS_ENI_CIDR_NETWORK="$(echo $CFS_ENI_CIDR | cut -d/ -f1)"
-                  CFS_ENI_CIDR_PREFIX="$(echo $CFS_ENI_CIDR | cut -d/ -f2)"
-                  CFS_ENI_ROUTER="$(( $(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f4) + 1))"
-                  CFS_ENI_GATEWAY="$(echo $CFS_ENI_CIDR_NETWORK | cut -d. -f1-3).$CFS_ENI_ROUTER"
-
-                  cat << EOF > /etc/netplan/51-$CFS_ENI_INTERFACE.yaml
-                network:
-                  version: 2
-                  renderer: networkd
-                  ethernets:
-                    $CFS_ENI_INTERFACE:
-                      addresses:
-                        - $CFS_NODE_IP/$CFS_ENI_CIDR_PREFIX
-                      dhcp4: no
-                      mtu: 9001
-                      match:
-                        macaddress: $CFS_ENI_HWADDR
-                      set-name: ens6
-                      routes:
-                       - to: 0.0.0.0/0
-                         via: $CFS_ENI_GATEWAY
-                         table: 1000
-                       - to: $CFS_ENI_CIDR
-                         via: 0.0.0.0
-                         scope: link
-                         table: 1000
-                      routing-policy:
-                        - from: $CFS_NODE_IP
-                          table: 1000
-                $(for IP in "${CFS_NODE_IPS[@]}"; do
-                    echo "        - to: $IP"
-                    echo "          table: 1000"
-                  done)
-                EOF
-                  netplan --debug generate
-                  netplan --debug apply
-
-                  if [ "$?" -ne 0 ]; then
-                    log_error "Failed to apply netplan"
-                    exit_error
-                  fi
-
-                  log_info "Configured netplan"
-                else
-                  log_info "Netplan already configured"
-                fi
-
-                # Using new ENI breaks ssm-agent connections, restart the agent
-                systemctl restart snap.amazon-ssm-agent.*
-
-                aws events put-events \
-                    --region "$AWS_REGION" \
-                    --endpoint-url "https://$CFS_EVENTS_ENDPOINT_DNS" \
-                    --entries "[
-                      {
-                        \"Source\": \"cfs.autoscaling\",
-                        \"DetailType\": \"CFS Node Update DNS Action\",
-                        \"Detail\": \"{ \\\"ClusterName\\\": \\\"$CFS_CLUSTER_NAME\\\", \\\"NodeId\\\": \\\"$CFS_NODE_ID\\\", \\\"NodeIp\\\": \\\"$CFS_NODE_IP\\\" }\"
-                      }
-                    ]"
-
-                if [ "$?" -ne 0 ]; then
-                  log_error "Failed to update node DNS"
-                  exit_error
-                else
-                  log_info "Updating node DNS"
-
-                  # wait for asynchronous DNS update to take affect
-                  attempts=15
-                  NODE_DNS_IP="$(dig +short "node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io")"
-                  while [ "x$NODE_DNS_IP" != "x$CFS_NODE_IP" ]; do
-                    if [ "$attempts" -eq 0 ]; then
-                      log_info "Node DNS not ready... retry"
-                      exit_retry
-                    fi
-
-                    let attempts--
-                    sleep 5
-
-                    NODE_DNS_IP="$(dig +short "node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io")"
-                  done
-                  log_info "Updated node DNS"
-                fi
-
-                cat << EOF > /opt/cfs/network.conf
-                CFS_NODE_HOSTNAME=$CFS_NODE_HOSTNAME
-                CFS_NODE_IP=$CFS_NODE_IP
-                CFS_NUM_NODES=$CFS_NUM_NODES
-                EOF
-
-                log_info "Configured network"
-                exit_success
-              mode: "000755"
-              owner: "root"
-              group: "root"
             /opt/cfs/startup.d/05-ssm-agent:
               content: |
                 #!/bin/bash
@@ -647,6 +399,226 @@ Resources:
                 systemctl restart snap.amazon-ssm-agent.*
 
                 log_info "Configured SSM agent"
+                exit_success
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            /opt/cfs/startup.d/10-node:
+              content: |
+                #!/bin/bash
+                . /opt/cfs/cfs.functions
+                . /opt/cfs/cfs.conf
+
+                if [ -f /opt/cfs/node.conf ]; then
+                  log_info "Node already configured... skipping"
+                  exit_success
+                else
+                  log_info "Configuring node"
+                fi
+
+                # Check for an already tagged node ID
+                CFS_NODE_ID="$(aws ec2 describe-tags \
+                      --region "$AWS_REGION" \
+                      --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                      --filters "Name=resource-id,Values=$CFS_INSTANCE_ID" \
+                                "Name=key,Values=CFSNodeId" \
+                      --query "Tags[0].Value" \
+                      --output text)"
+                if [ "$?" -ne 0 ]; then
+                  log_error "Unable to query instance tags"
+                  exit_error
+                fi
+
+                if [ "x$CFS_NODE_ID" != "x" ] && [ "x$CFS_NODE_ID" != "xNone" ]; then
+                  log_info "CFS Node ID instance tag found (node = $CFS_NODE_ID)"
+
+                  # Re-verify that we are the only active instance that assumed this node ID
+                  INSTANCE_IDS="$(aws ec2 describe-instances \
+                      --region "$AWS_REGION" \
+                      --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                      --filters "Name=tag:CFSClusterName,Values=$CFS_CLUSTER_NAME" \
+                                "Name=tag:CFSNodeId,Values=$ID" \
+                                "Name=instance-state-name,Values=running" \
+                      --query "Reservations[*].Instances[*].InstanceId" \
+                      --output text)"
+                  if [ "$?" -ne 0 ]; then
+                    log_info "Unable to describe instances"
+                    exit_error
+                  elif [ "x$INSTANCE_IDS" != "x$CFS_INSTANCE_ID" ]; then
+                    log_info "Another instance still active withour Node ID... retry"
+                    exit_retry
+                  fi
+                else
+                  # Instance doesn't have a CFSNodeId tag yet, determine node ID and tag instance
+                  LAUNCH_INDEX="$(get_ec2_meta 'ami-launch-index')"
+                  GROUP_OFFSET=$((3 * CFS_NODE_GROUP))
+
+                  for ((i = 0; i < 3; i++)); do
+                    ID=$((GROUP_OFFSET + (LAUNCH_INDEX + i) % 3))
+
+                    # Test for unused Node ID (the following steps can be race condition-y so we test again after)
+                    INSTANCE_IDS="$(aws ec2 describe-instances \
+                        --region "$AWS_REGION" \
+                        --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                        --filters "Name=tag:CFSClusterName,Values=$CFS_CLUSTER_NAME" \
+                                  "Name=tag:CFSNodeId,Values=$ID" \
+                                  "Name=instance-state-name,Values=running" \
+                        --query "Reservations[*].Instances[*].InstanceId" \
+                        --output text)"
+                    if [ "$?" -ne 0 ]; then
+                      log_error "Unable to describe instances"
+                      exit_error
+                    elif [ "x$INSTANCE_IDS" != "x" ] && [ "x$INSTANCE_IDS" != "x$CFS_INSTANCE_ID" ]; then
+                      continue # Node ID already in use by someone else
+                    fi
+
+                    # Tag ourselves as Node ID
+                    aws ec2 create-tags \
+                        --region "$AWS_REGION" \
+                        --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                        --resources "$CFS_INSTANCE_ID" \
+                        --tags "Key=CFSNodeId,Value=$ID"
+
+                    if [ "$?" -ne 0 ]; then
+                      log_error "Unable to create tags"
+                      exit_error
+                    fi
+
+                    # Re-verify that we are the only instance that assumed this node ID
+                    INSTANCE_IDS="$(aws ec2 describe-instances \
+                        --region "$AWS_REGION" \
+                        --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                        --filters "Name=tag:CFSClusterName,Values=$CFS_CLUSTER_NAME" \
+                                  "Name=tag:CFSNodeId,Values=$ID" \
+                                  "Name=instance-state-name,Values=running" \
+                        --query "Reservations[*].Instances[*].InstanceId" \
+                        --output text)"
+                    if [ "$?" -ne 0 ]; then
+                      log_info "Unable to describe instances"
+                      exit_error
+                    elif [ "x$INSTANCE_IDS" = "x" ] || [ "x$INSTANCE_IDS" != "x$CFS_INSTANCE_ID" ]; then
+                      # We failed to set ourselves as CFS Node ID atomically... untag, sleep back off, try again
+                      aws ec2 delete-tags \
+                          --region "$AWS_REGION" \
+                          --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                          --resources "$CFS_INSTANCE_ID" \
+                          --tags "Key=CFSNodeId,Value=$ID"
+                      if [ "$?" -ne 0 ]; then
+                        log_info "Unable to delete tags"
+                        exit_error
+                      fi
+                      sleep $((RANDOM % 20)) # random sleep back off to avoid collision again
+                      continue
+                    else
+                      CFS_NODE_ID="$ID"
+                      break
+                    fi
+                  done
+                fi
+
+                if [ "x$CFS_NODE_ID" = "x" ] || [ "x$CFS_NODE_ID" = "xNone" ]; then
+                  log_info "No available Node IDs found... retry"
+                  exit_retry
+                fi
+
+                echo "CFS_NODE_ID=$CFS_NODE_ID" > /opt/cfs/node.conf
+                log_info "Configured node = $CFS_NODE_ID"
+                exit_success
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            /opt/cfs/startup.d/20-network:
+              content: |
+                #!/bin/bash
+                . /opt/cfs/cfs.functions
+                . /opt/cfs/cfs.conf
+                . /opt/cfs/node.conf
+
+                if [ -f /opt/cfs/network.conf ]; then
+                  log_info "Network already configured... skipping"
+                  exit_success
+                else
+                  log_info "Configuring network"
+                fi
+
+                CFS_NODE_IP="$(get_ec2_meta "local-ipv4")"
+                CFS_NODE_HOSTNAME="node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
+
+                # Set local hostname
+                if ! hostname | grep -q "$CFS_NODE_HOSTNAME"; then
+                  hostnamectl set-hostname "$CFS_NODE_HOSTNAME"
+
+                  if [ "$?" -ne 0 ]; then
+                    log_error "Unable to set hostname"
+                    exit_error
+                  fi
+
+                  log_info "Configured hostname = $CFS_NODE_HOSTNAME"
+                else
+                  log_info "Hostname already configured"
+                fi
+
+                log_info "Updating node DNS"
+                aws events put-events \
+                    --region "$AWS_REGION" \
+                    --endpoint-url "https://$CFS_EVENTS_ENDPOINT_DNS" \
+                    --entries "[
+                      {
+                        \"Source\": \"cfs.autoscaling\",
+                        \"DetailType\": \"CFS Node Update DNS Action\",
+                        \"Detail\": \"{ \\\"ClusterName\\\": \\\"$CFS_CLUSTER_NAME\\\", \\\"NodeId\\\": \\\"$CFS_NODE_ID\\\", \\\"NodeIp\\\": \\\"$CFS_NODE_IP\\\", \\\"InstanceId\\\": \\\"$CFS_INSTANCE_ID\\\" }\"
+                      }
+                    ]"
+
+                if [ "$?" -ne 0 ]; then
+                  log_error "Failed to update node DNS"
+                  exit_error
+                else
+                  # wait for asynchronous DNS update to take affect
+                  CFS_NODE_DNS="$(aws ec2 describe-tags \
+                        --region "$AWS_REGION" \
+                        --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                        --filters "Name=resource-id,Values=$CFS_INSTANCE_ID" \
+                                  "Name=key,Values=CFSNodeDns" \
+                        --query "Tags[0].Value" \
+                        --output text)"
+                  if [ "$?" -ne 0 ]; then
+                    log_error "Unable to query instance tags"
+                    exit_error
+                  fi
+
+                  attempts=12
+                  while [ "x$CFS_NODE_DNS" = "xNone" ]; do
+                    if [ "$attempts" -eq 0 ]; then
+                      log_info "Node DNS not ready after 2 minutes... retry"
+                      exit_retry
+                    fi
+
+                    log_info "Node DNS not ready... sleeping 10s"
+                    let attempts--
+                    sleep 10
+
+                    CFS_NODE_DNS="$(aws ec2 describe-tags \
+                          --region "$AWS_REGION" \
+                          --endpoint-url "https://$CFS_EC2_ENDPOINT_DNS" \
+                          --filters "Name=resource-id,Values=$CFS_INSTANCE_ID" \
+                                    "Name=key,Values=CFSNodeDns" \
+                          --query "Tags[0].Value" \
+                          --output text)"
+                    if [ "$?" -ne 0 ]; then
+                      log_error "Unable to query instance tags"
+                      exit_error
+                    fi
+                  done
+                  log_info "Updated node DNS"
+                fi
+
+                cat << EOF > /opt/cfs/network.conf
+                CFS_NODE_HOSTNAME=$CFS_NODE_HOSTNAME
+                CFS_NODE_IP=$CFS_NODE_IP
+                EOF
+
+                log_info "Configured network"
                 exit_success
               mode: "000755"
               owner: "root"
@@ -1407,7 +1379,37 @@ Resources:
               mode: "000755"
               owner: "root"
               group: "root"
-            /opt/cfs/startup.d/70-gluster-start:
+            /opt/cfs/startup.d/70-gluster-peer:
+              content: |
+                #!/bin/bash
+                . /opt/cfs/cfs.functions
+                . /opt/cfs/cfs.conf
+                . /opt/cfs/node.conf
+                . /opt/cfs/network.conf
+
+                log_info "Configuring peers"
+                for ((ID = 0; ID < CFS_NUM_NODES; ++ID)); do
+                  UUID="$(uuidgen --sha1 --namespace '@dns' --name node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io)"
+                  if [ "$ID" -eq "$CFS_NODE_ID" ]; then
+                    cat << EOF > /var/lib/glusterd/glusterd.info
+                UUID=$UUID
+                operating-version=70200
+                EOF
+                  else
+                    cat << EOF > /var/lib/glusterd/peers/$UUID
+                uuid=$UUID
+                state=3
+                hostname1=node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io
+                EOF
+                  fi
+                done
+
+                log_info "Peers configured"
+                exit_success
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            /opt/cfs/startup.d/71-gluster-start:
               content: |
                 #!/bin/bash
                 . /opt/cfs/cfs.functions
@@ -1425,7 +1427,7 @@ Resources:
               mode: "000755"
               owner: "root"
               group: "root"
-            /opt/cfs/startup.d/71-gluster-peer:
+            /opt/cfs/startup.d/72-gluster-volume-create:
               content: |
                 #!/bin/bash
                 . /opt/cfs/cfs.functions
@@ -1437,31 +1439,8 @@ Resources:
                   log_info "Not the master node... skipping"
                   exit_success
                 else
-                  log_info "Peering cluster"
+                  log_info "Creating Gluster volumes"
                 fi
-
-                attempts=15
-                false
-                while [ "$?" -gt 0 ]; do
-                  if [ "$attempts" -eq 0 ]; then
-                    log_info "All peers not probed... retry"
-                    exit_retry
-                  fi
-
-                  errors=0
-                  for ((ID = 0; ID < CFS_NUM_NODES; ID++)); do
-                    gluster peer probe "node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io"
-                    if [ "$?" -gt 0 ]; then
-                      let errors++
-                    fi
-                  done
-
-                  if [ "$errors" -gt 0 ]; then
-                    let attempts--
-                    sleep 1
-                    false
-                  fi
-                done
 
                 # Wait for all peers to be connected
                 attempts=15
@@ -1482,25 +1461,11 @@ Resources:
                   fi
                 done
 
-                log_info "Peered cluster"
-                exit_success
-              mode: "000755"
-              owner: "root"
-              group: "root"
-            /opt/cfs/startup.d/72-gluster-volume-create:
-              content: |
-                #!/bin/bash
-                . /opt/cfs/cfs.functions
-                . /opt/cfs/cfs.conf
-                . /opt/cfs/node.conf
-                . /opt/cfs/network.conf
-
-                if [ "x$CFS_NODE_ID" != "x0" ]; then
-                  log_info "Not the master node... skipping"
-                  exit_success
-                else
-                  log_info "Creating Gluster volumes"
-                fi
+                # Node 0 sees all peers as connected but other nodes may not have updated state
+                # yet to see the cluster as fully connected. Safety sleep 10 to allow gluster
+                # daemon time to fully synchronize.
+                sleep 10
+                log_info "All nodes peered"
 
                 IFS="," read -ra CFS_VOLUME_NAMES <<< "$CFS_VOLUME_NAMES"
                 CFS_BRICK_BASE_DIR="/data/cfs/$CFS_CLUSTER_NAME"
@@ -1572,6 +1537,25 @@ Resources:
                 else
                   log_info "Expanding Gluster volumes"
                 fi
+
+                # Wait for all peers to be connected
+                attempts=15
+                false
+                while [ "$?" -gt 0 ]; do
+                  if [ "$attempts" -eq 0 ]; then
+                    log_info "All peers not connected... retry"
+                    exit_retry
+                  fi
+
+                  peers="$(gluster peer status | grep -c 'Peer in Cluster (Connected)')"
+                  let peers++ # +1 for ourselves, the localhost peer
+
+                  if [ "$peers" -lt "$CFS_NUM_NODES" ]; then
+                    let attempts--
+                    sleep 1
+                    false
+                  fi
+                done
 
                 CFS_BRICK_BASE_DIR="/data/cfs/$CFS_CLUSTER_NAME"
                 IFS="," read -ra CFS_VOLUME_NAMES <<< "$CFS_VOLUME_NAMES"

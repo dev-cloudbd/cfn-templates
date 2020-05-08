@@ -6,7 +6,7 @@ Parameters:
   ## CloudBD Credentials
   CloudBDCredentialsParamName:
     Description: SSM Parameter Name that contains your CloudBD credentials.
-    Type: String
+    Type: AWS::SSM::Parameter::Name
     Default: '/cloudbd/credentials.json'
 
   CloudBDCredentialsCustomKeyId:
@@ -117,7 +117,7 @@ Parameters:
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-0d13494dfc8eb8ba4
+      HVM64: ami-079958276794ddecd
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
@@ -280,159 +280,6 @@ Resources:
       SubnetId: !Ref CFSPrivateSubnet
       RouteTableId: !Ref CFSPrivateSubnetRouteTable
 
-  CFSNode0Eni:
-    Type: AWS::EC2::NetworkInterface
-    Properties:
-      Description: 'Static IP for CFS Node 0'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 0 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode1Eni:
-    Type: AWS::EC2::NetworkInterface
-    Properties:
-      Description: 'Static IP for CFS Node 1'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 1 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode2Eni:
-    Type: AWS::EC2::NetworkInterface
-    Properties:
-      Description: 'Static IP for CFS Node 2'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 2 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode3Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use6Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 3'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 3 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode4Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use6Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 4'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 4 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode5Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use6Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 5'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 5 ENI - (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode6Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use9Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 6'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 6 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode7Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use9Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 7'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 7 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode8Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use9Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 8'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 8 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode9Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use12Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 9'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 9 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode10Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use12Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 10'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 10 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSNode11Eni:
-    Type: AWS::EC2::NetworkInterface
-    Condition: Use12Nodes
-    Properties:
-      Description: 'Static IP for CFS Node 11'
-      GroupSet: [!Ref CFSNodeSecurityGroup]
-      SubnetId: !Ref CFSPrivateSubnet
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Node 11 ENI (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
   ##############################################################################
   # Networking - VPC Endpoints
   CFSS3VpcEndpoint:
@@ -555,36 +402,6 @@ Resources:
 
   ##############################################################################
   # Networking - Route53 DNS
-  CFSMasterNodeReverseLookupHostedZone:
-    Type: AWS::Route53::HostedZone
-    Properties:
-      HostedZoneConfig:
-        Comment: !Sub 'CFS reverse lookup for ${ClusterName}.cfs.cloudbd.io'
-      Name: !Sub
-        - '${S3}.${S2}.${S1}.${S0}.in-addr.arpa.'
-        - S0: !Select [0, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-          S1: !Select [1, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-          S2: !Select [2, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-          S3: !Select [3, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-      VPCs:
-        - VPCId: !Ref Vpc
-          VPCRegion: !Ref 'AWS::Region'
-
-  CFSMasterNodeReverseLookupRecordSet:
-    Type: AWS::Route53::RecordSet
-    Properties:
-      Comment: 'Node0 ENI reverse lookup'
-      HostedZoneId: !Ref CFSMasterNodeReverseLookupHostedZone
-      Name: !Sub
-        - '${S3}.${S2}.${S1}.${S0}.in-addr.arpa.'
-        - S0: !Select [0, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-          S1: !Select [1, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-          S2: !Select [2, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-          S3: !Select [3, !Split ['.', !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress]]
-      ResourceRecords: [!Sub 'node0.${ClusterName}.cfs.cloudbd.io']
-      Type: PTR
-      TTL: 60
-
   CFSHostedZone:
     Type: AWS::Route53::HostedZone
     Properties:
@@ -594,29 +411,6 @@ Resources:
       VPCs:
         - VPCId: !Ref Vpc
           VPCRegion: !Ref 'AWS::Region'
-
-  CFSRecordSetGroup:
-    Type: AWS::Route53::RecordSetGroup
-    Properties:
-      Comment: "DNS entries for CFS nodes"
-      HostedZoneId: !Ref CFSHostedZone
-      RecordSets:
-        - Name: !Sub '${ClusterName}.cfs.cloudbd.io'
-          ResourceRecords:
-            - !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress
-            - !GetAtt CFSNode1Eni.PrimaryPrivateIpAddress
-            - !GetAtt CFSNode2Eni.PrimaryPrivateIpAddress
-            - !If [Use6Nodes, !GetAtt CFSNode3Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use6Nodes, !GetAtt CFSNode4Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use6Nodes, !GetAtt CFSNode5Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use9Nodes, !GetAtt CFSNode6Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use9Nodes, !GetAtt CFSNode7Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use9Nodes, !GetAtt CFSNode8Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-          Type: A
-          TTL: 60
 
   # DNS records for CFS nodes are dynamically created/updated when autoscaling nodes come online.
   # CloudFormation doesn't handle deletion of the HostedZone while these records exist.
@@ -675,15 +469,15 @@ Resources:
         - - !Sub 'node0.${ClusterName}.cfs.cloudbd.io.'
           - !Sub 'node1.${ClusterName}.cfs.cloudbd.io.'
           - !Sub 'node2.${ClusterName}.cfs.cloudbd.io.'
-          - !If [Use6Nodes, !Sub 'node3.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use6Nodes, !Sub 'node4.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use6Nodes, !Sub 'node5.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use9Nodes, !Sub 'node6.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use9Nodes, !Sub 'node7.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use9Nodes, !Sub 'node8.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use12Nodes, !Sub 'node9.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use12Nodes, !Sub 'node10.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
-          - !If [Use12Nodes, !Sub 'node11.${ClusterName}.cfs.cloudbd.io.', !Ref 'AWS::NoValue']
+          - !Sub 'node3.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node4.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node5.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node6.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node7.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node8.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node9.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node10.${ClusterName}.cfs.cloudbd.io.'
+          - !Sub 'node11.${ClusterName}.cfs.cloudbd.io.'
 
   ##############################################################################
   # CloudBD S3 Remote - For high-performance storage of CFS data to S3
@@ -893,9 +687,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'autoscaling:DescribeAutoScalingGroups' # Power status in terminate scripts using ASG desired count
-                  - 'ec2:AttachNetworkInterface'            # Attach static IP ENI to nodes
                   - 'ec2:DescribeInstances'                 # Prevent duplicate node startup on separate subnets that can cause data corruption
-                  - 'ec2:DescribeNetworkInterfaceAttribute' # Node identification
                   - 'ec2:DescribeTags'                      # Identify ASG name, CFN Stack name, CFS node group
                   - 'events:PutEvents'                      # Trigger startup route 53 dns update in lifecycle lambda
                   - !If [UseCache, 'ec2:DescribeInstanceAttribute', !Ref 'AWS::NoValue'] # Identify cache volume
@@ -903,6 +695,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'ec2:CreateTags'                        # Set the CFSNodeID tag on startup / protect against duplicate node startup
+                  - 'ec2:DeleteTags'
                 Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
                 Condition:
                   StringEquals:
@@ -933,15 +726,14 @@ Resources:
 
   CFSLaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
-    DependsOn: # Missing dependencies to force graceful terminate
+    DependsOn: # Missing dependencies to force graceful terminate ordering
       - CFSS3VpcEndpoint
       - CFSNodeGlusterFSBrickSecurityGroupIngress
       - CFSNodeGlusterFSSecurityGroupIngress
       - CFSNodeSshSecurityGroupIngress
       - CFSNodePingSecurityGroupIngress
       - CFSPrivateSubnetRouteTableAssociation
-      - CFSRecordSetGroup
-      - CFSMasterNodeReverseLookupRecordSet
+      - CFSRecordSetCleaner
       - CFSAutoScalingGroupStartupLifecycleHookEventRulePermission
       - CFSAutoScalingGroupTerminateLifecycleHookEventRulePermission
       - CFSAutoScalingGroupTerminateLifecycleHookFailureEventRulePermission
@@ -987,12 +779,9 @@ Resources:
             AWS_CFN_NAME="$AWS_CFN_NAME"
             CFS_INSTANCE_ID="$CFS_INSTANCE_ID"
             CFS_NODE_GROUP="$CFS_NODE_GROUP"
-            CFS_NODE_IPS='${CFSNodeIps}'
+            CFS_NUM_NODES="${NumNodes}"
             CFS_ASG_NAME="$CFS_ASG_NAME"
             CFS_ASG_RESOURCE="CFSAutoScalingGroup$CFS_NODE_GROUP"
-            CFS_ENI_IDS='${CFSNodeEnis}'
-            CFS_ENI_INTERFACE="ens6"
-            CFS_ENI_DEVICE_INDEX="1"
             CLOUDBD_CREDENTIALS_REGION="${AWS::Region}"
             CLOUDBD_CREDENTIALS_PARAM_NAME="${CloudBDCredentialsParamName}"
             CLOUDBD_REMOTE_NAME="remote"
@@ -1018,35 +807,7 @@ Resources:
 
             /opt/cfs/scripts/startup
             exit $?
-          - CFSNodeEnis: !Join
-              - ','
-              - - !Ref CFSNode0Eni
-                - !Ref CFSNode1Eni
-                - !Ref CFSNode2Eni
-                - !If [Use6Nodes, !Ref CFSNode3Eni, !Ref 'AWS::NoValue']
-                - !If [Use6Nodes, !Ref CFSNode4Eni, !Ref 'AWS::NoValue']
-                - !If [Use6Nodes, !Ref CFSNode5Eni, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !Ref CFSNode6Eni, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !Ref CFSNode7Eni, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !Ref CFSNode8Eni, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !Ref CFSNode9Eni, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !Ref CFSNode10Eni, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !Ref CFSNode11Eni, !Ref 'AWS::NoValue']
-            CFSNodeIps: !Join
-              - ','
-              - - !GetAtt CFSNode0Eni.PrimaryPrivateIpAddress
-                - !GetAtt CFSNode1Eni.PrimaryPrivateIpAddress
-                - !GetAtt CFSNode2Eni.PrimaryPrivateIpAddress
-                - !If [Use6Nodes, !GetAtt CFSNode3Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use6Nodes, !GetAtt CFSNode4Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use6Nodes, !GetAtt CFSNode5Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !GetAtt CFSNode6Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !GetAtt CFSNode7Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !GetAtt CFSNode8Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !GetAtt CFSNode9Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !GetAtt CFSNode10Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !GetAtt CFSNode11Eni.PrimaryPrivateIpAddress, !Ref 'AWS::NoValue']
-            CloudBDDiskNames: !Join
+          - CloudBDDiskNames: !Join
               - ','
               - - !GetAtt CFSNode0CloudBDDisk.Name
                 - !GetAtt CFSNode1CloudBDDisk.Name
@@ -1317,7 +1078,15 @@ Resources:
                 Action:
                   - 'autoscaling:CompleteLifecycleAction'
                   - 'ec2:DescribeTags'
+                  - 'route53:GetChange'
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:CreateTags' # Set the CFSNodeDns tag
+                Resource: !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CFSClusterName: !Ref ClusterName
               - Effect: Allow
                 Action: 'route53:ChangeResourceRecordSets'
                 Resource: !Sub 'arn:aws:route53:::hostedzone/${CFSHostedZone}'
@@ -1340,7 +1109,7 @@ Resources:
       Environment:
         Variables:
           LIFECYCLE_HOOK_DOCUMENT_NAME: !Ref CFSAutoScalingGroupLifecycleHookSSMDocument
-          LIFECYCLE_HOOK_NAME: !Sub 'CFS-${ClusterName}-SafeTerminte'
+          LIFECYCLE_HOOK_NAME: !Sub 'CFS-${ClusterName}-SafeTerminate'
           ROUTE53_HOSTED_ZONE: !Ref CFSHostedZone
       Timeout: 120
       MemorySize: 512
@@ -1514,8 +1283,14 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}::CFSVolumeName'
 
-  CFSClusterDnsName:
-    Description: DNS name of the CFS cluster
-    Value: !Sub '${ClusterName}.cfs.cloudbd.io'
+  CFSClusterPrimaryDnsName:
+    Description: Primary DNS name of the CFS cluster
+    Value: !Sub 'node0.${ClusterName}.cfs.cloudbd.io'
     Export:
-      Name: !Sub '${AWS::StackName}::CFSClusterDnsName'
+      Name: !Sub '${AWS::StackName}::CFSClusterPrimaryDnsName'
+
+  CFSClusterSecondaryDnsName:
+    Description: Secondary DNS name of the CFS cluster
+    Value: !Sub 'node1.${ClusterName}.cfs.cloudbd.io'
+    Export:
+      Name: !Sub '${AWS::StackName}::CFSClusterSecondaryDnsName'

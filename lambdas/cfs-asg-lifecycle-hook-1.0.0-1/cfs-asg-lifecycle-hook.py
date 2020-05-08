@@ -1,4 +1,5 @@
 import boto3
+from botocore.exceptions import WaiterError
 import json
 import logging
 import time
@@ -7,6 +8,9 @@ import os
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 ssm_client = boto3.client("ssm")
+route53_client = boto3.client('route53')
+asg_client = boto3.client('autoscaling')
+ec2_client = boto3.client('ec2')
 
 DOCUMENT_NAME = os.environ.get("LIFECYCLE_HOOK_DOCUMENT_NAME", "") # Required
 LIFECYCLE_HOOK = os.environ.get("LIFECYCLE_HOOK_NAME", "") # Required
@@ -28,6 +32,7 @@ TIMED_OUT_STATUS = "TimedOut"
 CLUSTER_KEY = "ClusterName"
 NODE_ID_KEY = "NodeId"
 NODE_IP_KEY = "NodeIp"
+INSTANCE_ID_KEY = "InstanceId"
 
 def check_response(response_json):
     try:
@@ -61,7 +66,7 @@ def check_document():
             return False
     except Exception as e:
         logger.error("Document error: %s", str(e))
-        return None   
+        return None
 
 def send_command(instance_id, params={}):
     # Until the document is not ready, waits in accordance to a backoff mechanism.
@@ -74,13 +79,13 @@ def send_command(instance_id, params={}):
         timewait += timewait
     try:
         response = ssm_client.send_command(
-            InstanceIds = [ instance_id ], 
-            DocumentName = DOCUMENT_NAME, 
+            InstanceIds = [ instance_id ],
+            DocumentName = DOCUMENT_NAME,
             TimeoutSeconds = 120,
             Parameters = params
             )
         if check_response(response):
-            logger.info("Command sent: %s", response)       
+            logger.info("Command sent: %s", response)
             return response['Command']['CommandId']
         else:
             logger.error("Command could not be sent: %s", response)
@@ -93,8 +98,8 @@ def check_command(command_id, instance_id):
     timewait = 1
     while True:
         response_iterator = ssm_client.list_command_invocations(
-            CommandId = command_id, 
-            InstanceId = instance_id, 
+            CommandId = command_id,
+            InstanceId = instance_id,
             Details=False
             )
         if check_response(response_iterator):
@@ -111,11 +116,8 @@ def check_command(command_id, instance_id):
         timewait += timewait
 
 def abandon_lifecycle(instance_id, auto_scaling_group = None):
-    asg_client = boto3.client('autoscaling')
-
     try:
         if not auto_scaling_group:
-            ec2_client = boto3.client('ec2')
             response = ec2_client.describe_tags(
                 Filters=[
                     {
@@ -151,11 +153,9 @@ def abandon_lifecycle(instance_id, auto_scaling_group = None):
             logger.error("Lifecycle hook could not be abandoned: %s", response)
     except Exception as e:
         logger.error("Lifecycle hook abandon could not be executed: %s", str(e))
-        return None    
+        return None
 
-def update_node_dns(name, ip):
-    route53_client = boto3.client('route53')
-
+def update_node_dns(name, ip, instance_id):
     try:
         response = route53_client.change_resource_record_sets(
                 HostedZoneId=HOSTED_ZONE,
@@ -176,12 +176,23 @@ def update_node_dns(name, ip):
 
         if check_response(response):
             logger.info("Node DNS route change requested: %s", response)
-            return response['ChangeInfo']['Id']
+            change_id = response['ChangeInfo']['Id']
+            dns_update_waiter = route53_client.get_waiter('resource_record_sets_changed')
+            # wait up to 5 minutes for dns propogation to sync
+            dns_update_waiter.wait(Id=change_id, WaiterConfig={'Delay': 5, 'MaxAttempts': 60})
+            ec2_client.create_tags(
+                    Resources=[ instance_id ],
+                    Tags=[
+                        {
+                            'Key': 'CFSNodeDns',
+                            'Value': name
+                        }
+                    ]
+                    )
         else:
             logger.error("Failed to request node DNS route change: %s", response)
     except Exception as e:
         logger.error("Update node dns could not be executed: %s", str(e))
-        return None
 
 def check_environment():
     if not LIFECYCLE_HOOK:
@@ -208,17 +219,40 @@ def handler(event, context):
         if not check_environment():
             logging.error("Missing required environment variables")
 
-        # Startup lifecycle hooks
-        if source == 'cfs.autoscaling' and CLUSTER_KEY in message and NODE_ID_KEY in message and NODE_IP_KEY in message:
-            cluster_name = message[CLUSTER_KEY]
-            node_id = message[NODE_ID_KEY]
-            node_ip = message[NODE_IP_KEY]
+        # Startup lifecycle hook
+        # Instance finds an available node id using tags and then emits a cloudwatch event for this lambda
+        # to handle the update to the route53 dns. Private subnets can't directly update route53 yet
+        # because there is no route53 vpc endpoint. In the future, if one exists, this logic can more
+        # cleanly be implemented directly in the network startup scripts instead of a lambda. In this
+        # implementation we update the route53 record to the instance's ip and set a tag on the instance
+        # so that the startup scripts know when the dns update has fully propogated and it is safe to start
+        # glusterd.
+        if source == 'cfs.autoscaling':
+            if (CLUSTER_KEY in message and
+                    NODE_ID_KEY in message and
+                    NODE_IP_KEY in message and
+                    INSTANCE_ID_KEY in message):
+                cluster_name = message[CLUSTER_KEY]
+                node_id = message[NODE_ID_KEY]
+                node_ip = message[NODE_IP_KEY]
+                instance_id = message[INSTANCE_ID_KEY]
 
-            update_node_dns('node' + node_id + '.' + cluster_name + '.cfs.cloudbd.io', node_ip)
-            logging.info("Updated route53 DNS entries for new node")
+                update_node_dns(
+                        'node' + node_id + '.' + cluster_name + '.cfs.cloudbd.io',
+                        node_ip,
+                        instance_id
+                        )
+                logging.info("Updated route53 DNS entries for new node")
+            else:
+                logging.error("Missing required cfs.autoscaling parameters in event details")
             return None
 
-        # Terminate lifecycle hooks
+        # Terminate lifecycle hook
+        # When an instance is terminated due to an autoscaling event we attempt to cleanly shutdown the
+        # server by invoking graceful stop commands of gluster. In the event that we fail to execute
+        # the commands, ssm will attempt to reexecute the terminate scripts with a force flag set if a
+        # timeout was reached. Otherwise, the lambda will complete the lifecycle hook allowing the instance
+        # to be terminated by the ASG.
         if source == 'aws.autoscaling' and EC2_KEY in message and ASG_KEY in message:
             instance_id = message[EC2_KEY]
             auto_scaling_group = message[ASG_KEY]
@@ -239,6 +273,7 @@ def handler(event, context):
             logging.error("No valid JSON message: %s", parsed_message)
             return None
 
+        # Invoke SSM document for terminate lifecycle hook
         if not check_document():
             logging.error("Document not found")
             abandon_lifecycle(instance_id, auto_scaling_group)

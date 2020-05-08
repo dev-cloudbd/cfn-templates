@@ -25,17 +25,17 @@ CloudBD disks are virtual Linux block devices that store all disk data in S3 obj
       /dev/mapper/<REMOTE>:<DISK>
   ```
 
-The easiest way to try out CloudBD disks on AWS is by using CloudFormation and the [CloudBD All-In-One template](https://github.com/dev-cloudbd/cfn-templates/blob/master/cloudbd-aio.yml). This template creates an isolated VPC containing an EC2 instance (Ubuntu 18.04LTS/Bionic) with a CloudBD disk attached for testing. Once created, ssh to the instance and try out the CloudBD disk. When finished, simply delete the CloudFormation stack to clean up all created resources.
+The easiest way to try out CloudBD disks on AWS is by using CloudFormation and the [CloudBD All-In-One template](https://github.com/dev-cloudbd/cfn-templates/blob/master/cloudbd-aio.yml). This template creates an isolated VPC containing an EC2 instance (Ubuntu 18.04LTS/Bionic) with a CloudBD disk attached for testing. Once created, ssh to the instance and try out the CloudBD disk. When finished, delete the CloudFormation stack to clean up all created resources.
 
-The [CloudBD S3 Remote template](https://github.com/dev-cloudbd/cfn-templates/blob/master/remote.yml) lets you create CloudBD disks directly from CloudFormation templates using a custom resource lambda. The full documentation for using CloudBD disks with CloudFormation is available at the [CloudBD Documentation pages](https://www.cloudbd.io/docs/remote-aws-s3.html#cloudformation-setup-guide). Complete example templates for all supported Linux distros are provided in this git repository.
+The [CloudBD S3 Remote template](https://github.com/dev-cloudbd/cfn-templates/blob/master/remote.yml) lets you create CloudBD disks directly from your CloudFormation templates using a custom resource lambda. The full documentation for using CloudBD disks with CloudFormation is available at the [CloudBD Documentation pages](https://www.cloudbd.io/docs/remote-aws-s3.html#cloudformation-setup-guide). Complete example templates for all supported Linux distros are provided in this git repository.
 
 ## CFS
 
-CFS is a fully POSIX-compliant network filesystem backed by S3.
+CFS is a fully POSIX-compliant network filesystem backed by S3. Features include petabyte scalable capacity, extreme data durability, high availability (both in single AZ or across multi AZ), thinly allocated/usage based pricing, and capable of sustaining 10 GB/s+ throughput.
 
 ### **Supported Clients**
 
-* GlusterFS Fuse Client
+* GlusterFS FUSE Client
 
 ## CloudBD All-In-One
 

@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudBD File System (CFS) - Version 1.0 - Multi AZ'
+Description: 'CloudBD File System (CFS) - Version 1.0 - Single AZ'
 
 Parameters:
   ###########################################################################
   ## CloudBD Credentials
   CloudBDCredentialsParamName:
     Description: SSM Parameter Name that contains your CloudBD credentials.
-    Type: String
+    Type: AWS::SSM::Parameter::Name
     Default: '/cloudbd/credentials.json'
 
   CloudBDCredentialsCustomKeyId:
@@ -22,36 +22,12 @@ Parameters:
     Description: VPC to deploy CFS into
     Type: AWS::EC2::VPC::Id
 
-  AvailabilityZone0:
+  AvailabilityZone:
     Description: Availability zone for the CFS cluster
     Type: AWS::EC2::AvailabilityZone::Name
 
-  AvailabilityZone1:
-    Description: Availability zone for the CFS cluster
-    Type: AWS::EC2::AvailabilityZone::Name
-
-  AvailabilityZone2:
-    Description: Availability zone for the CFS cluster
-    Type: AWS::EC2::AvailabilityZone::Name
-
-  SubnetCidr0:
-    Description: CFS private subnet IP CIDR range for availability zone 0 (x.x.x.x/n).
-    Type: String
-    MinLength: '9'
-    MaxLength: '18'
-    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
-    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
-
-  SubnetCidr1:
-    Description: CFS private subnet IP CIDR range for availability zone 1 (x.x.x.x/n).
-    Type: String
-    MinLength: '9'
-    MaxLength: '18'
-    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
-    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
-
-  SubnetCidr2:
-    Description: CFS private subnet IP CIDR range for availability zone 2 (x.x.x.x/n).
+  SubnetCidr:
+    Description: CFS subnet IP CIDR range of form x.x.x.x/n.
     Type: String
     MinLength: '9'
     MaxLength: '18'
@@ -78,8 +54,8 @@ Parameters:
     Description: Number of CFS nodes
     Type: Number
     Default: 3
-    AllowedValues: [3,6,9,12]
-    ConstraintDescription: must be a multiple of 3 between 3 and 12
+    AllowedValues: [3]
+    ConstraintDescription: must be a multiple of 3 between [3, 3]
 
   InstanceType:
     Description: Instance type for the CFS cluster nodes
@@ -152,12 +128,6 @@ Conditions:
   SsmSessionEnabledP: !And [!Condition PoweredOn, !Condition SsmSessionEnabled]
   CloudWatchEnabled: !Equals ['yes', !Ref CloudWatchSupport]
   CloudWatchEnabledP: !And [!Condition PoweredOn, !Condition CloudWatchEnabled]
-  Use6Nodes: !Not [!Equals [!Ref NumNodes, '3']]
-  Use6NodesP: !And [!Condition Use6Nodes, !Condition PoweredOn]
-  Use9Nodes: !And [!Condition Use6Nodes, !Not [!Equals [!Ref NumNodes, '6']]]
-  Use9NodesP: !And [!Condition Use9Nodes, !Condition PoweredOn]
-  Use12Nodes: !And [!Condition Use9Nodes, !Not [!Equals [!Ref NumNodes, '9']]]
-  Use12NodesP: !And [!Condition Use12Nodes, !Condition PoweredOn]
   UseCache: !Equals ['0', '1'] # always false, bcache can have stability issues in detached cache state, future feature
   PoweredOn: !Equals ['on', !Ref Power]
 
@@ -281,39 +251,15 @@ Resources:
 
   ##############################################################################
   # Networking - Subnets and ENIs
-  CFSPrivateSubnet0:
+  CFSPrivateSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref Vpc
-      CidrBlock: !Ref SubnetCidr0
-      AvailabilityZone: !Ref AvailabilityZone0
+      CidrBlock: !Ref SubnetCidr
+      AvailabilityZone: !Ref AvailabilityZone
       Tags:
         - Key: 'Name'
-          Value: !Sub 'CFS Private Subnet 0 (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSPrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: !Ref SubnetCidr1
-      AvailabilityZone: !Ref AvailabilityZone1
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Private Subnet 1 (${ClusterName})'
-        - Key: 'CFSClusterName'
-          Value: !Ref ClusterName
-
-  CFSPrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: !Ref SubnetCidr2
-      AvailabilityZone: !Ref AvailabilityZone2
-      Tags:
-        - Key: 'Name'
-          Value: !Sub 'CFS Private Subnet 2 (${ClusterName})'
+          Value: !Sub 'CFS Private Subnet (${ClusterName})'
         - Key: 'CFSClusterName'
           Value: !Ref ClusterName
 
@@ -322,22 +268,10 @@ Resources:
     Properties:
       VpcId: !Ref Vpc
 
-  CFSPrivateSubnet0RouteTableAssociation:
+  CFSPrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref CFSPrivateSubnet0
-      RouteTableId: !Ref CFSPrivateSubnetRouteTable
-
-  CFSPrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref CFSPrivateSubnet1
-      RouteTableId: !Ref CFSPrivateSubnetRouteTable
-
-  CFSPrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref CFSPrivateSubnet2
+      SubnetId: !Ref CFSPrivateSubnet
       RouteTableId: !Ref CFSPrivateSubnetRouteTable
 
   ##############################################################################
@@ -358,10 +292,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSCloudFormationEndpoint:
@@ -372,10 +303,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSApiEndpoint:
@@ -386,10 +314,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSSsmEndpoint:
@@ -400,10 +325,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSSsmMessagesEndpoint:
@@ -414,10 +336,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSLoggingEndpoint:
@@ -428,10 +347,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSMonitoringEndpoint:
@@ -442,10 +358,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [ !Ref CFSEndpointSecurityGroup ]
 
   CFSEc2MessagesEndpoint:
@@ -456,10 +369,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSAutoScalingEndpoint:
@@ -470,10 +380,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   CFSEventsEndpoint:
@@ -484,10 +391,7 @@ Resources:
       VpcEndpointType: Interface
       PrivateDnsEnabled: false
       VpcId: !Ref Vpc
-      SubnetIds:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      SubnetIds: [ !Ref CFSPrivateSubnet ]
       SecurityGroupIds: [!Ref CFSEndpointSecurityGroup]
 
   ##############################################################################
@@ -559,15 +463,6 @@ Resources:
         - - !Sub 'node0.${ClusterName}.cfs.cloudbd.io.'
           - !Sub 'node1.${ClusterName}.cfs.cloudbd.io.'
           - !Sub 'node2.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node3.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node4.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node5.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node6.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node7.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node8.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node9.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node10.${ClusterName}.cfs.cloudbd.io.'
-          - !Sub 'node11.${ClusterName}.cfs.cloudbd.io.'
 
   ##############################################################################
   # CloudBD S3 Remote - For high-performance storage of CFS data to S3
@@ -656,7 +551,7 @@ Resources:
           CLOUDBD_CREDS_SSM_PARAM: !Ref CloudBDCredentialsParamName
       Code:
         S3Bucket: !Sub '${AWS::Region}.cloudbd.io'
-        S3Key: 'cfn-templates/cloudbd-disk-3.0.4-1.zip'
+        S3Key: 'cfn-templates/cloudbd-disk-3.0.5-1.zip'
       Timeout: 900
       MemorySize: 512
       Tags:
@@ -670,84 +565,21 @@ Resources:
     Properties:
       ServiceToken: !GetAtt CloudBDDiskLambda.Arn
       Name: !Sub 'cfs_${ClusterName}_disk0'
-      Size: '134217856M' # 128T + 128M
+      Size: '500G'
 
   CFSNode1CloudBDDisk:
     Type: Custom::CloudBDDisk
     Properties:
       ServiceToken: !GetAtt CloudBDDiskLambda.Arn
       Name: !Sub 'cfs_${ClusterName}_disk1'
-      Size: '134217856M' # 128T + 128M
+      Size: '500G'
 
   CFSNode2CloudBDDisk:
     Type: Custom::CloudBDDisk
     Properties:
       ServiceToken: !GetAtt CloudBDDiskLambda.Arn
       Name: !Sub 'cfs_${ClusterName}_disk2'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode3CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk3'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode4CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk4'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode5CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk5'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode6CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk6'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode7CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk7'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode8CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk8'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode9CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk9'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode10CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk10'
-      Size: '134217856M' # 128T + 128M
-
-  CFSNode11CloudBDDisk:
-    Type: Custom::CloudBDDisk
-    Properties:
-      ServiceToken: !GetAtt CloudBDDiskLambda.Arn
-      Name: !Sub 'cfs_${ClusterName}_disk11'
-      Size: '134217856M' # 128T + 128M
+      Size: '500G'
 
   CFSNodeRole:
     Type: AWS::IAM::Role
@@ -822,9 +654,7 @@ Resources:
       - CFSNodeGlusterFSSecurityGroupIngress
       - CFSNodeSshSecurityGroupIngress
       - CFSNodePingSecurityGroupIngress
-      - CFSPrivateSubnet0RouteTableAssociation
-      - CFSPrivateSubnet1RouteTableAssociation
-      - CFSPrivateSubnet2RouteTableAssociation
+      - CFSPrivateSubnetRouteTableAssociation
       - CFSRecordSetCleaner
       - CFSAutoScalingGroupStartupLifecycleHookEventRulePermission
       - CFSAutoScalingGroupTerminateLifecycleHookEventRulePermission
@@ -904,15 +734,6 @@ Resources:
               - - !GetAtt CFSNode0CloudBDDisk.Name
                 - !GetAtt CFSNode1CloudBDDisk.Name
                 - !GetAtt CFSNode2CloudBDDisk.Name
-                - !If [Use6Nodes, !GetAtt CFSNode3CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use6Nodes, !GetAtt CFSNode4CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use6Nodes, !GetAtt CFSNode5CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !GetAtt CFSNode6CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !GetAtt CFSNode7CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use9Nodes, !GetAtt CFSNode8CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !GetAtt CFSNode9CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !GetAtt CFSNode10CloudBDDisk.Name, !Ref 'AWS::NoValue']
-                - !If [Use12Nodes, !GetAtt CFSNode11CloudBDDisk.Name, !Ref 'AWS::NoValue']
             CFSEc2EndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSEc2Endpoint.DnsEntries]]]
             CFSCloudFormationEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSCloudFormationEndpoint.DnsEntries]]]
             CFSApiEndpointDns: !Select [1, !Split [':', !Select [0, !GetAtt CFSApiEndpoint.DnsEntries]]]
@@ -937,15 +758,13 @@ Resources:
     Type: AWS::AutoScaling::AutoScalingGroup
     Condition: PoweredOn
     Properties:
+      AvailabilityZones: [!Ref AvailabilityZone]
       MinSize: !If [PoweredOn, '3', '0']
       MaxSize: '3'
       DesiredCapacity: !If [PoweredOn, '3', '0']
       LaunchConfigurationName: !Ref CFSLaunchConfiguration
       PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
-      VPCZoneIdentifier:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
+      VPCZoneIdentifier: [!Ref CFSPrivateSubnet]
       LifecycleHookSpecificationList:
         - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
           LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
@@ -965,136 +784,6 @@ Resources:
         - Key: 'CFSNodeGroup'
           PropagateAtLaunch: true
           Value: '0'
-        - Key: 'CFSNodeId'
-          PropagateAtLaunch: true
-          Value: 'None'
-        - Key: 'CFSDependsOn'   # Force master node updates after all other groups for clean expansion
-          PropagateAtLaunch: false
-          Value: !Join
-            - ','
-            - - !If [Use6Nodes, !Ref CFSAutoScalingGroup1, !Ref 'AWS::NoValue']
-              - !If [Use9Nodes, !Ref CFSAutoScalingGroup2, !Ref 'AWS::NoValue']
-              - !If [Use12Nodes, !Ref CFSAutoScalingGroup3, !Ref 'AWS::NoValue']
-    UpdatePolicy:
-      AutoScalingRollingUpdate:
-        MaxBatchSize: 1
-        MinInstancesInService: !If [PoweredOn, '2', '0']
-        MinSuccessfulInstancesPercent: 100
-
-  CFSAutoScalingGroup1:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Condition: Use6NodesP
-    Properties:
-      MinSize: !If [PoweredOn, '3', '0']
-      MaxSize: '3'
-      DesiredCapacity: !If [PoweredOn, '3', '0']
-      LaunchConfigurationName: !Ref CFSLaunchConfiguration
-      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
-      VPCZoneIdentifier:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
-      LifecycleHookSpecificationList:
-        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
-          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
-          HeartbeatTimeout: 900
-          DefaultResult: 'ABANDON'
-        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
-          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
-          HeartbeatTimeout: 900
-          DefaultResult: 'CONTINUE'
-      Tags:
-        - Key: 'Name'
-          PropagateAtLaunch: true
-          Value: 'CFS Node'
-        - Key: 'CFSClusterName'
-          PropagateAtLaunch: true
-          Value: !Ref ClusterName
-        - Key: 'CFSNodeGroup'
-          PropagateAtLaunch: true
-          Value: '1'
-        - Key: 'CFSNodeId'
-          PropagateAtLaunch: true
-          Value: 'None'
-    UpdatePolicy:
-      AutoScalingRollingUpdate:
-        MaxBatchSize: 1
-        MinInstancesInService: !If [PoweredOn, '2', '0']
-        MinSuccessfulInstancesPercent: 100
-
-  CFSAutoScalingGroup2:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Condition: Use9NodesP
-    Properties:
-      MinSize: !If [PoweredOn, '3', '0']
-      MaxSize: '3'
-      DesiredCapacity: !If [PoweredOn, '3', '0']
-      LaunchConfigurationName: !Ref CFSLaunchConfiguration
-      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
-      VPCZoneIdentifier:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
-      LifecycleHookSpecificationList:
-        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
-          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
-          HeartbeatTimeout: 900
-          DefaultResult: 'ABANDON'
-        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
-          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
-          HeartbeatTimeout: 900
-          DefaultResult: 'CONTINUE'
-      Tags:
-        - Key: 'Name'
-          PropagateAtLaunch: true
-          Value: 'CFS Node'
-        - Key: 'CFSClusterName'
-          PropagateAtLaunch: true
-          Value: !Ref ClusterName
-        - Key: 'CFSNodeGroup'
-          PropagateAtLaunch: true
-          Value: '2'
-        - Key: 'CFSNodeId'
-          PropagateAtLaunch: true
-          Value: 'None'
-    UpdatePolicy:
-      AutoScalingRollingUpdate:
-        MaxBatchSize: 1
-        MinInstancesInService: !If [PoweredOn, '2', '0']
-        MinSuccessfulInstancesPercent: 100
-
-  CFSAutoScalingGroup3:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Condition: Use12NodesP
-    Properties:
-      MinSize: !If [PoweredOn, '3', '0']
-      MaxSize: '3'
-      DesiredCapacity: !If [PoweredOn, '3', '0']
-      LaunchConfigurationName: !Ref CFSLaunchConfiguration
-      PlacementGroup: !If [UsePlacementGroup, !Ref CFSPlacementGroup, !Ref 'AWS::NoValue']
-      VPCZoneIdentifier:
-        - !Ref CFSPrivateSubnet0
-        - !Ref CFSPrivateSubnet1
-        - !Ref CFSPrivateSubnet2
-      LifecycleHookSpecificationList:
-        - LifecycleHookName: !Sub 'CFS-${ClusterName}-Startup'
-          LifecycleTransition: 'autoscaling:EC2_INSTANCE_LAUNCHING'
-          HeartbeatTimeout: 900
-          DefaultResult: 'ABANDON'
-        - LifecycleHookName: !Sub 'CFS-${ClusterName}-SafeTerminate'
-          LifecycleTransition: 'autoscaling:EC2_INSTANCE_TERMINATING'
-          HeartbeatTimeout: 900
-          DefaultResult: 'CONTINUE'
-      Tags:
-        - Key: 'Name'
-          PropagateAtLaunch: true
-          Value: 'CFS Node'
-        - Key: 'CFSClusterName'
-          PropagateAtLaunch: true
-          Value: !Ref ClusterName
-        - Key: 'CFSNodeGroup'
-          PropagateAtLaunch: true
-          Value: '3'
         - Key: 'CFSNodeId'
           PropagateAtLaunch: true
           Value: 'None'
@@ -1304,12 +993,8 @@ Metadata:
           default: 'VPC and Network Settings'
         Parameters:
           - Vpc
-          - AvailabilityZone0
-          - SubnetCidr0
-          - AvailabilityZone1
-          - SubnetCidr1
-          - AvailabilityZone2
-          - SubnetCidr2
+          - AvailabilityZone
+          - SubnetCidr
       - Label:
           default: 'CFS Settings'
         Parameters:
@@ -1333,18 +1018,10 @@ Metadata:
     ParameterLabels:
       Vpc:
         default: 'VPC ID'
-      AvailabilityZone0:
-        default: 'Availability Zone 0'
-      AvailabilityZone0:
-        default: 'Availability Zone 1'
-      AvailabilityZone0:
-        default: 'Availability Zone 2'
-      SubnetCidr0:
-        default: 'Subnet CIDR 0'
-      SubnetCidr1:
-        default: 'Subnet CIDR 1'
-      SubnetCidr2:
-        default: 'Subnet CIDR 2'
+      AvailabilityZone:
+        default: 'Availability Zone'
+      SubnetCidr:
+        default: 'Subnet CIDR'
       ClusterName:
         default: 'Cluster Name'
       VolumeName:

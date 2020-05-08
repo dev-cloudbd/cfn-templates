@@ -33,12 +33,12 @@ Parameters:
     Description: Filesystem client type
     Type: String
     Default: glusterfs
-    AllowedValues: [glusterfs, nfs]
+    AllowedValues: [glusterfs]
 
   MountIpOrDns:
     Description: Filesystem server IP address or DNS name
     Type: String
-    Default: 'cluster.cfs.cloudbd.io'
+    Default: 'node0.cluster.cfs.cloudbd.io'
 
   MountVolume:
     Description: Filesystem volume name or remote directory path
@@ -48,7 +48,7 @@ Parameters:
   MountOptions:
     Description: Filesystem mount options
     Type: String
-    Default: ''
+    Default: 'backupvolfile-server=node1.cluster.cfs.cloudbd.io'
 
   MountPath:
     Description: Local mount point
@@ -68,40 +68,40 @@ Parameters:
     ConstraintDescription: must be 'yes' or 'no'
 
 Mappings:
-  # Latest mappings updated Tue Dec 10, 2019
+  # Latest mappings updated Fri May 8, 2020
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-00a208c7cdba991ea
+      HVM64: ami-05801d0a3c8e4c443
     us-east-2:
-      HVM64: ami-059d836af932792c3
+      HVM64: ami-0a040c35ca945058a
     us-west-1:
-      HVM64: ami-0f42d8c4eb586ccf7
+      HVM64: ami-0365b50e7a63e3bf1
     us-west-2:
-      HVM64: ami-0a7d051a1c4b54f65
+      HVM64: ami-06ffade19910cbfc0
     ca-central-1:
-      HVM64: ami-0972a0d3135cf1fc0
+      HVM64: ami-0628c8183517a434a
     eu-central-1:
-      HVM64: ami-09356619876445425
+      HVM64: ami-0b6d8a6db0c665fb7
     eu-west-1:
-      HVM64: ami-04c58523038d79132
+      HVM64: ami-0964eb2dc8b836eb6
     eu-west-2:
-      HVM64: ami-00622b440d92e55c0
+      HVM64: ami-09d9cc949a8e2e8b3
     eu-west-3:
-      HVM64: ami-0b70d1460d5c7a299
+      HVM64: ami-06d9c6325dbcc4e62
     eu-north-1:
-      HVM64: ami-005bc7d72deb72a3d
+      HVM64: ami-018de7985594be421
     ap-northeast-1:
-      HVM64: ami-0f6b4f4104d26f399
+      HVM64: ami-081e053d3c3cd94f1
     ap-northeast-2:
-      HVM64: ami-02b4a5559ce53a570
+      HVM64: ami-04a51618f807bd431
     ap-southeast-1:
-      HVM64: ami-07febfdfb4080320e
+      HVM64: ami-0e763a959ec839f5e
     ap-southeast-2:
-      HVM64: ami-04a0f7552cff370ba
+      HVM64: ami-0051f0f3f07a8934a
     ap-south-1:
-      HVM64: ami-0245841fc4b40e22f
+      HVM64: ami-07ae4f0fa498eede9
     sa-east-1:
-      HVM64: ami-049f5d88d2d436431
+      HVM64: ami-0a8302bf9ba144bf1
 
 Conditions:
   SsmSessionEnabled: !Equals ['yes', !Ref SsmSessionSupport]
@@ -449,4 +449,3 @@ Metadata:
         default: 'Key Name'
       SsmSessionSupport:
         default: 'SSM Session Support'
-
