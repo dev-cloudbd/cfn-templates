@@ -89,9 +89,9 @@ Parameters:
     ConstraintDescription: must be a supported instance type
 
   PlacementStrategy:
-    Description: Placement group strategy for the CFS cluster nodes. 'cluster' provides lower latency between nodes and 'spread' provides more resilience to simulataneous node failures.
+    Description: Placement group strategy for the CFS cluster nodes. 'spread' provides more resilience to simulataneous node failures.
     Type: String
-    AllowedValues: ['none', 'cluster', 'spread']
+    AllowedValues: ['none', 'spread']
     Default: 'none'
 
   ############################################################################
