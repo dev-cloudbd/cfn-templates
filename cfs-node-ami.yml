@@ -1647,7 +1647,7 @@ Resources:
                         --query StackResourceDetail.ResourceStatus \
                         --output text)"
 
-                  if [ "x$RESOURCE_STATUS" = "xDELETE_IN_PROGRESS" ]; then
+                  if [ "x$CFS_NODE_GROUP" = "x0" ] && [ "x$RESOURCE_STATUS" = "xDELETE_IN_PROGRESS" ]; then
                     log_info "Stack deletion is in progress"
                     stop_needed=true
                   else
