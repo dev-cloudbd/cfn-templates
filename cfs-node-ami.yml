@@ -1946,6 +1946,51 @@ Resources:
               mode: "000755"
               owner: "root"
               group: "root"
+            /opt/cfs/scripts/wipe-volume:
+              content: |
+                #!/bin/bash
+                # Must have the CloudBD disk configured and started from /opt/cfs/startup.d/3-cloudbd
+                . /opt/cfs/cfs.functions
+                . /opt/cfs/cloudbd.conf
+
+                if [ "x$CLOUDBD_DEV" = "x" ] || ! [ -b "$CLOUDBD_DEV" ] ; then
+                  log_error "No CloudBD device found"
+                  exit_error
+                fi
+
+                echo "Warning: This will erase all data from '$CLOUDBD_DEV'"
+                read -r -p "Continue? [y/n] " _confirm
+                case "$_confirm" in
+                [Yy])
+                  ;;
+                [Nn])
+                  exit 0
+                  ;;
+                *)
+                  >&2 echo "Invalid response"
+                  exit 1
+                  ;;
+                esac
+
+                log_info "Deactivating $CLOUDBD_DEV"
+                blkdeactivate -u -l wholevg,retry "$CLOUDBD_DEV"
+                if [ $? -ne 0 ]; then
+                  log_error "Failed to deactivate ''$CLOUDBD_DEV'"
+                  exit_error
+                fi
+
+                log_info "Discarding $CLOUDBD_DEV data"
+                blkdiscard -p 2147483648 /dev/nbd0
+                sync
+
+                log_info "Stopping $CLOUDBD_DISK_NAME"
+                cbddisks_stop -a -f
+
+                log_info "wipe-volume complete"
+                exit_success
+              mode: "000755"
+              owner: "root"
+              group: "root"
     CreationPolicy:
       ResourceSignal:
         Timeout: PT10M
