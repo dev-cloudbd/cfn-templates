@@ -13,37 +13,37 @@ Mappings:
   # Latest mappings updated Fri May 8, 2020
   UbuntuBionic:
     us-east-1:
-      HVM64: ami-05801d0a3c8e4c443
+      HVM64: ami-0ac80df6eff0e70b5
     us-east-2:
-      HVM64: ami-0a040c35ca945058a
+      HVM64: ami-0a63f96e85105c6d3
     us-west-1:
-      HVM64: ami-0365b50e7a63e3bf1
+      HVM64: ami-0d705db840ec5f0c5
     us-west-2:
-      HVM64: ami-06ffade19910cbfc0
+      HVM64: ami-053bc2e89490c5ab7
     ca-central-1:
-      HVM64: ami-0628c8183517a434a
+      HVM64: ami-065ba2b6b298ed80f
     eu-central-1:
-      HVM64: ami-0b6d8a6db0c665fb7
+      HVM64: ami-0d359437d1756caa8
     eu-west-1:
-      HVM64: ami-0964eb2dc8b836eb6
+      HVM64: ami-089cc16f7f08c4457
     eu-west-2:
-      HVM64: ami-09d9cc949a8e2e8b3
+      HVM64: ami-00f6a0c18edb19300
     eu-west-3:
-      HVM64: ami-06d9c6325dbcc4e62
+      HVM64: ami-0e11cbb34015ff725
     eu-north-1:
-      HVM64: ami-018de7985594be421
+      HVM64: ami-0f920d75f0ce2c4bb
     ap-northeast-1:
-      HVM64: ami-081e053d3c3cd94f1
+      HVM64: ami-0cfa3caed4b487e77
     ap-northeast-2:
-      HVM64: ami-04a51618f807bd431
+      HVM64: ami-0d777f54156eae7d9
     ap-southeast-1:
-      HVM64: ami-0e763a959ec839f5e
+      HVM64: ami-063e3af9d2cc7fe94
     ap-southeast-2:
-      HVM64: ami-0051f0f3f07a8934a
+      HVM64: ami-0bc49f9283d686bab
     ap-south-1:
-      HVM64: ami-07ae4f0fa498eede9
+      HVM64: ami-02d55cb47e83a99a0
     sa-east-1:
-      HVM64: ami-0a8302bf9ba144bf1
+      HVM64: ami-0faf2c48fc9c8f966
 
 Resources:
   ##############################################################################
