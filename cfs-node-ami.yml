@@ -819,6 +819,36 @@ Resources:
                             "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
                             "log_stream_name": "node$CFS_NODE_ID-{instance_id}-terminate",
                             "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/glusterfs/glusterd.log",
+                            "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-glusterd",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/glusterfs/glustershd.log",
+                            "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-glustershd",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/glusterfs/cli.log",
+                            "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-cli",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/glusterfs/cmd_history.log",
+                            "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-cmd_history",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/glusterfs/bricks/**.log",
+                            "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-bricks",
+                            "timezone": "UTC"
                           }
                         ]
                       }
