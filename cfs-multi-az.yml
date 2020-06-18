@@ -141,7 +141,7 @@ Parameters:
 Mappings:
   CFSNodeAmis:
     us-east-2:
-      HVM64: ami-08e6a500e498eb39d
+      HVM64: ami-0ee3e48ad9805b3b4
 
 Conditions:
   CloudBDUseEncryption: !Equals ['yes', !Ref CloudBDServerSideEncryption]
@@ -1335,9 +1335,9 @@ Metadata:
         default: 'VPC ID'
       AvailabilityZone0:
         default: 'Availability Zone 0'
-      AvailabilityZone0:
+      AvailabilityZone1:
         default: 'Availability Zone 1'
-      AvailabilityZone0:
+      AvailabilityZone2:
         default: 'Availability Zone 2'
       SubnetCidr0:
         default: 'Subnet CIDR 0'
