@@ -10,7 +10,7 @@ Parameters:
     ConstraintDescription: must be a valid subnet ID
 
 Mappings:
-  # Latest mappings updated Fri May 8, 2020
+  # Latest mappings updated Jun 16, 2020
   UbuntuBionic:
     us-east-1:
       HVM64: ami-0ac80df6eff0e70b5
@@ -1163,13 +1163,9 @@ Resources:
                 . /opt/cfs/node.conf
                 . /opt/cfs/cloudbd.conf
                 . /opt/cfs/lvm.conf
+                . /opt/cfs/gluster-persistent-storage.conf
 
-                if [ -f /opt/cfs/gluster-volume-storage.conf ]; then
-                  log_info "Gluster volume storage already configured... skipping"
-                  exit_success
-                else
-                  log_info "Configuring Gluster volume storage"
-                fi
+                log_info "Configuring Gluster volume storage"
 
                 IFS="," read -ra CFS_VOLUME_NAMES <<< "$CFS_VOLUME_NAMES"
                 for CFS_VOLUME_NAME in "${CFS_VOLUME_NAMES[@]}"; do
@@ -1178,6 +1174,15 @@ Resources:
                   # Configure Volume LVM LVs
                   LVM_LV="${CFS_VOLUME_NAME}_lv"
                   LVM_DEV="/dev/mapper/$LVM_VG-$LVM_LV"
+
+                  # Protect against recreating the base lv when Gluster snapshots have been restored
+                  # Gluster snapshots being restored shifts the brick mount responsibility to glusterd
+                  VOLFILE="$CFS_VOLUME_NAME.node$CFS_NODE_ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io.data-cfs-$CFS_CLUSTER_NAME-disk$CFS_NODE_ID-$CFS_VOLUME_NAME-brick.vol"
+                  if [ -f "$GLUSTER_MOUNT_DIR/glusterd/vols/$CFS_VOLUME_NAME/info" ] &&
+                     ! [ -f "$GLUSTER_MOUNT_DIR/glusterd/vols/$CFS_VOLUME_NAME/$VOLFILE" ]; then
+                     log_info "Volume $CFS_VOLUME_NAME has migrated to snapshot bricks (Glusterd managed logical volumes)... skipping"
+                     continue
+                  fi
 
                   if ! lvs "$LVM_VG/$LVM_LV" >/dev/null 2>&1; then
                     if [ "x$CFS_SNAPSHOT_SUPPORT" = "xyes" ]; then
@@ -1418,6 +1423,8 @@ Resources:
                 . /opt/cfs/network.conf
 
                 log_info "Configuring peers"
+                # Peers are configured manually rather than using the gluster peer command because reverse
+                # dns lookup in AWS is a nightmare
                 for ((ID = 0; ID < CFS_NUM_NODES; ++ID)); do
                   UUID="$(uuidgen --sha1 --namespace '@dns' --name node$ID.$CFS_CLUSTER_NAME.cfs.cloudbd.io)"
                   if [ "$ID" -eq "$CFS_NODE_ID" ]; then
@@ -1635,12 +1642,16 @@ Resources:
                 # Restart the agent in case of broken endpoint updates
                 # The agent will self fix itself in 15-20 minutes if not
                 # restarted after an endpoint change.
+                # Suspected this problem has been fixed by disabling the ubuntu
+                # built in dns cache
                 systemctl restart snap.amazon-ssm-agent.*
                 log_info "Restarted ssm-agent"
 
                 # Restart glusterd to force update of dns. Glusterd caches
                 # node IP addresses indefinitely causing Gluster CLI commands
                 # to fail when changes are made to dns.
+                # Suspected this problem has been fixed by disabling the ubuntu
+                # built in dns cache
                 systemctl restart glusterd
                 sleep 5 # glusterd starts asynchronously... wait to give time for self heal daemon to get up
                 log_info "Restarted Gluster management daemon"
