@@ -445,7 +445,7 @@ Resources:
                     log_info "Unable to describe instances"
                     exit_error
                   elif [ "x$INSTANCE_IDS" != "x$CFS_INSTANCE_ID" ]; then
-                    log_info "Another instance still active withour Node ID... retry"
+                    log_info "Another instance still active with our Node ID... retry"
                     exit_retry
                   fi
                 else
