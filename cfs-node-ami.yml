@@ -835,19 +835,19 @@ Resources:
                           {
                             "file_path": "/var/log/glusterfs/cli.log",
                             "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
-                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-cli",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-gluster-cli",
                             "timezone": "UTC"
                           },
                           {
                             "file_path": "/var/log/glusterfs/cmd_history.log",
                             "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
-                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-cmd_history",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-gluster-cmd_history",
                             "timezone": "UTC"
                           },
                           {
-                            "file_path": "/var/log/glusterfs/bricks/**.log",
+                            "file_path": "/var/log/glusterfs/bricks/data-cfs-$CFS_CLUSTER_NAME-disk*-*-brick.log",
                             "log_group_name": "/cloudbd/cfs/$CFS_CLUSTER_NAME",
-                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-bricks",
+                            "log_stream_name": "node$CFS_NODE_ID-{instance_id}-gluster-volume-brick",
                             "timezone": "UTC"
                           }
                         ]
